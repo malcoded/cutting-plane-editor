@@ -12,6 +12,7 @@ const initialUnplacedPieces = [
   { id: 2, width: 800, height: 300, rotated: false, label: "Piece 2" },
   { id: 3, width: 200, height: 500, rotated: false, label: "Loose 1" },
   { id: 4, width: 400, height: 600, rotated: false, label: "Piece 3" },
+  { id: 5, width: 120, height: 370, rotated: false, label: "Piece 4" },
 ];
 
 function isOverlapping(p1, p2) {
@@ -39,7 +40,6 @@ function validatePiece(piece, pieces) {
 
 function generateCutLines(pieces, cutDirection) {
   const lines = [];
-  //   let level = 0;
 
   function recursiveCuts(area, piecesInArea, currentLevel, direction) {
     if (currentLevel > MAX_LEVEL || piecesInArea.length <= 1) return;
