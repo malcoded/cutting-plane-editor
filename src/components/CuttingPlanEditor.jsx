@@ -1,70 +1,155 @@
-import { useEffect, useRef, useState } from "react";
-import { Stage, Layer, Rect, Line, Group, Text } from "react-konva";
+import React, { useEffect, useRef, useState } from "react";
+import { Stage, Layer, Rect, Text, Group } from "react-konva";
 import pattern from "./pattern.json";
 
+// —— 1. VARIABLES GLOBALES —— //
 const BOARD_WIDTH = 2440;
 const BOARD_HEIGHT = 2150;
 
-/**
- * Verifica si `piece` colisiona con cualquiera de los rectángulos en `others`.
- */
-function checkCollision(piece, others) {
-  return others.some((other) => {
-    if (other.id === piece.id) return false;
-    return !(
-      piece.x + piece.width <= other.x ||
-      piece.x >= other.x + other.width ||
-      piece.y + piece.height <= other.y ||
-      piece.y >= other.y + other.height
-    );
-  });
-}
+const kerf = 3;
+const refiladoLeft = 2;
+const refiladoRight = 2;
+const refiladoTop = 2;
+const refiladoBottom = 2;
+const gap = 5; // Margen mínimo entre piezas
+const tolerance = 0.5; // Tolerancia de medición
+const minPieceWidth = 50;
+const minPieceHeight = 50;
+const maxPieceWidth = BOARD_WIDTH;
+const maxPieceHeight = BOARD_HEIGHT;
+const cutSpeed = 300;
+const feedSpeed = 1000;
+const lossFactor = 2;
 
-/**
- * Recorre el tablero en incrementos de 10px para encontrar la primera posición
- * donde `piece` cabe sin colisionar con `others`. Devuelve { x, y } o null.
- */
-function findFirstAvailablePosition(piece, others) {
-  for (let y = 0; y <= BOARD_HEIGHT - piece.height; y += 10) {
-    for (let x = 0; x <= BOARD_WIDTH - piece.width; x += 10) {
-      const candidate = { ...piece, x, y };
-      if (!checkCollision(candidate, others)) {
-        return { x, y };
-      }
-    }
-  }
-  return null;
-}
-
-export default function GuillotineEditor() {
+export default function GuillotineEditor_Fase3() {
+  // —— Estado para piezas colocadas y piezas libres —— //
   const [pieces, setPieces] = useState([]);
   const [freePieces, setFreePieces] = useState([]);
   const containerRef = useRef();
   const stageRef = useRef();
   const [scale, setScale] = useState(1);
-  const [selectedId, setSelectedId] = useState(null);
+  const selectedIdRef = useRef(null);
 
-  // Carga inicial de piezas desde pattern.json
+  // —— 2. Área útil descontando refilado —— //
+  const usableArea = {
+    x: refiladoLeft,
+    y: refiladoTop,
+    width: BOARD_WIDTH - refiladoLeft - refiladoRight,
+    height: BOARD_HEIGHT - refiladoTop - refiladoBottom,
+  };
+
+  // —— 3. Validar dimensiones mínimas/máximas —— //
+  function isDimensionValid(piece) {
+    return (
+      piece.width >= minPieceWidth &&
+      piece.height >= minPieceHeight &&
+      piece.width <= maxPieceWidth &&
+      piece.height <= maxPieceHeight
+    );
+  }
+
+  // —— 4. Detectar colisión simple (sin gap) —— //
+  function checkCollision(piece, others) {
+    return others.some((other) => {
+      if (other.id === piece.id) return false;
+      return !(
+        piece.x + piece.width <= other.x ||
+        piece.x >= other.x + other.width ||
+        piece.y + piece.height <= other.y ||
+        piece.y >= other.y + other.height
+      );
+    });
+  }
+
+  // —— 5. Detectar colisión con gap y tolerance —— //
+  function checkCollisionWithGap(piece, others) {
+    const inflPiece = {
+      x: piece.x - gap / 2 - tolerance,
+      y: piece.y - gap / 2 - tolerance,
+      width: piece.width + gap + 2 * tolerance,
+      height: piece.height + gap + 2 * tolerance,
+    };
+    return others.some((other) => {
+      const inflOther = {
+        x: other.x - gap / 2 - tolerance,
+        y: other.y - gap / 2 - tolerance,
+        width: other.width + gap + 2 * tolerance,
+        height: other.height + gap + 2 * tolerance,
+      };
+      return !(
+        inflPiece.x + inflPiece.width <= inflOther.x ||
+        inflPiece.x >= inflOther.x + inflOther.width ||
+        inflPiece.y + inflPiece.height <= inflOther.y ||
+        inflPiece.y >= inflOther.y + inflOther.height
+      );
+    });
+  }
+
+  // —— 6. Buscar la primera posición libre considerando gap y tolerance —— //
+  function findFirstAvailablePosition(piece, others) {
+    const step = 10;
+    const inflWidth = piece.width + gap + 2 * tolerance;
+    const inflHeight = piece.height + gap + 2 * tolerance;
+    const startX = usableArea.x + gap / 2 + tolerance;
+    const endX =
+      usableArea.x + usableArea.width - (piece.width + gap / 2 + tolerance);
+    const startY = usableArea.y + gap / 2 + tolerance;
+    const endY =
+      usableArea.y + usableArea.height - (piece.height + gap / 2 + tolerance);
+
+    for (let y = startY; y <= endY; y += step) {
+      for (let x = startX; x <= endX; x += step) {
+        const candidate = { x: x - gap / 2, y: y - gap / 2 };
+        // Inflamos el candidato para colisión
+        const inflCandidate = {
+          x: candidate.x - gap / 2 - tolerance,
+          y: candidate.y - gap / 2 - tolerance,
+          width: piece.width + gap + 2 * tolerance,
+          height: piece.height + gap + 2 * tolerance,
+        };
+        const collision = others.some((other) => {
+          const inflOther = {
+            x: other.x - gap / 2 - tolerance,
+            y: other.y - gap / 2 - tolerance,
+            width: other.width + gap + 2 * tolerance,
+            height: other.height + gap + 2 * tolerance,
+          };
+          return !(
+            inflCandidate.x + inflCandidate.width <= inflOther.x ||
+            inflCandidate.x >= inflOther.x + inflOther.width ||
+            inflCandidate.y + inflCandidate.height <= inflOther.y ||
+            inflCandidate.y >= inflOther.y + inflOther.height
+          );
+        });
+        if (!collision) {
+          return candidate;
+        }
+      }
+    }
+    return null;
+  }
+
+  // —— 7. Carga inicial de piezas colocadas —— //
   useEffect(() => {
     const data = pattern[0].layout[0];
-    const loadedPieces = data.part.map((p) => {
+    const loaded = data.part.map((p) => {
       const rotated = p.rotated === "True";
       const width = rotated ? parseFloat(p.length) : parseFloat(p.width);
       const height = rotated ? parseFloat(p.width) : parseFloat(p.length);
       return {
         id: parseInt(p.part),
         label: `Pza ${p.nItem}`,
-        x: parseFloat(p.x),
-        y: parseFloat(p.y),
         width,
         height,
         rotated,
+        x: parseFloat(p.x),
+        y: parseFloat(p.y),
       };
     });
-    setPieces(loadedPieces);
+    setPieces(loaded);
   }, []);
 
-  // Ajuste de escala cuando se redimensiona la ventana
+  // —— 8. Ajuste de escala al redimensionar ventana —— //
   useEffect(() => {
     const resize = () => {
       const containerWidth = containerRef.current?.offsetWidth || 1000;
@@ -78,376 +163,76 @@ export default function GuillotineEditor() {
     return () => window.removeEventListener("resize", resize);
   }, []);
 
-  // Manejo de teclas para eliminar (Delete/Escape) o rotar ("r") pieza seleccionada
+  // —— 9. Teclas: eliminar pieza seleccionada y rotar si válida —— //
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (selectedId !== null && (e.key === "Delete" || e.key === "Escape")) {
-        const pieceToRemove = pieces.find((p) => p.id === selectedId);
-        if (pieceToRemove) {
-          setPieces((prev) => prev.filter((p) => p.id !== selectedId));
-          setFreePieces((prev) => [...prev, pieceToRemove]);
-          setSelectedId(null);
-        }
-      }
-
-      if (e.key.toLowerCase() === "r" && selectedId !== null) {
-        setPieces((prev) =>
-          prev.map((p) =>
-            p.id === selectedId
-              ? {
-                  ...p,
-                  width: p.height,
-                  height: p.width,
-                  rotated: !p.rotated,
-                }
-              : p
-          )
-        );
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedId, pieces]);
-
-  /**
-   * Genera todas las líneas de corte estilo guillotina, con { iCut, x1, y1, x2, y2, aLevel }.
-   */
-  function generateGuillotineCuts(pieces, boardWidth, boardHeight) {
-    const cuts = [];
-    let cutIndex = 0;
-    const sortedPieces = [...pieces].sort((a, b) => a.y - b.y || a.x - b.x);
-
-    function groupBy(array, keyGetter) {
-      return array.reduce((result, item) => {
-        const key = keyGetter(item);
-        result[key] = result[key] || [];
-        result[key].push(item);
-        return result;
-      }, {});
-    }
-
-    function subdivide(area, piecesInArea, level) {
-      if (piecesInArea.length <= 1) return;
-
-      const canSplitHorizontally =
-        new Set(piecesInArea.map((p) => p.y)).size > 1;
-      const canSplitVertically = new Set(piecesInArea.map((p) => p.x)).size > 1;
-
-      if (canSplitHorizontally) {
-        const rows = groupBy(piecesInArea, (p) => p.y);
-        let offset = area.y;
-
-        for (const [_rowY, rowPieces] of Object.entries(rows)) {
-          const rowHeight = Math.max(...rowPieces.map((p) => p.height));
-          const nextY = offset + rowHeight;
-
-          if (nextY < area.y + area.height) {
-            cuts.push({
-              iCut: cutIndex++,
-              x1: area.x,
-              y1: nextY,
-              x2: area.x + area.width,
-              y2: nextY,
-              aLevel: level,
-            });
-
-            subdivide(
-              {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: nextY - area.y,
-              },
-              rowPieces,
-              level + 1
-            );
-            subdivide(
-              {
-                x: area.x,
-                y: nextY,
-                width: area.width,
-                height: area.y + area.height - nextY,
-              },
-              piecesInArea.filter((p) => p.y >= nextY),
-              level + 1
-            );
-            return;
+      const pid = selectedIdRef.current;
+      if (pid != null) {
+        // DELETE o ESCAPE → quitar pieza y enviarla a freePieces
+        if (e.key === "Delete" || e.key === "Escape") {
+          const removed = pieces.find((p) => p.id === pid);
+          if (removed) {
+            setPieces((prev) => prev.filter((p) => p.id !== pid));
+            setFreePieces((prev) => [...prev, removed]);
           }
+          selectedIdRef.current = null;
         }
-      }
-
-      if (canSplitVertically) {
-        const cols = groupBy(piecesInArea, (p) => p.x);
-        let offset = area.x;
-
-        for (const [_colX, colPieces] of Object.entries(cols)) {
-          const colWidth = Math.max(...colPieces.map((p) => p.width));
-          const nextX = offset + colWidth;
-
-          if (nextX < area.x + area.width) {
-            cuts.push({
-              iCut: cutIndex++,
-              x1: nextX,
-              y1: area.y,
-              x2: nextX,
-              y2: area.y + area.height,
-              aLevel: level,
-            });
-
-            subdivide(
-              {
-                x: area.x,
-                y: area.y,
-                width: nextX - area.x,
-                height: area.height,
-              },
-              colPieces,
-              level + 1
-            );
-            subdivide(
-              {
-                x: nextX,
-                y: area.y,
-                width: area.x + area.width - nextX,
-                height: area.height,
-              },
-              piecesInArea.filter((p) => p.x >= nextX),
-              level + 1
-            );
-            return;
-          }
-        }
-      }
-    }
-
-    subdivide(
-      { x: 0, y: 0, width: boardWidth, height: boardHeight },
-      sortedPieces,
-      0
-    );
-
-    return cuts;
-  }
-
-  /**
-   * Genera todas las áreas rectangulares (subdivisiones) estilo guillotina,
-   * con { x, y, width, height, level }.
-   */
-  function generateCutAreas(pieces, boardWidth, boardHeight) {
-    const areas = [];
-    const sortedPieces = [...pieces].sort((a, b) => a.y - b.y || a.x - b.x);
-
-    function groupBy(array, keyGetter) {
-      return array.reduce((result, item) => {
-        const key = keyGetter(item);
-        result[key] = result[key] || [];
-        result[key].push(item);
-        return result;
-      }, {});
-    }
-
-    function subdivideArea(area, piecesInArea, level) {
-      areas.push({ ...area, level });
-      if (piecesInArea.length <= 1) return;
-
-      const canSplitHorizontally =
-        new Set(piecesInArea.map((p) => p.y)).size > 1;
-      const canSplitVertically = new Set(piecesInArea.map((p) => p.x)).size > 1;
-
-      if (canSplitHorizontally) {
-        const rows = groupBy(piecesInArea, (p) => p.y);
-        let offsetY = area.y;
-
-        for (const [_rowY, rowPieces] of Object.entries(rows)) {
-          const rowHeight = Math.max(...rowPieces.map((p) => p.height));
-          const nextY = offsetY + rowHeight;
-
-          if (nextY < area.y + area.height) {
-            const topArea = {
-              x: area.x,
-              y: area.y,
-              width: area.width,
-              height: rowHeight,
-            };
-            const bottomArea = {
-              x: area.x,
-              y: nextY,
-              width: area.width,
-              height: area.y + area.height - nextY,
-            };
-            subdivideArea(topArea, rowPieces, level + 1);
-            subdivideArea(
-              bottomArea,
-              piecesInArea.filter((p) => p.y >= nextY),
-              level + 1
-            );
-            return;
-          }
-        }
-      }
-
-      if (canSplitVertically) {
-        const cols = groupBy(piecesInArea, (p) => p.x);
-        let offsetX = area.x;
-
-        for (const [_colX, colPieces] of Object.entries(cols)) {
-          const colWidth = Math.max(...colPieces.map((p) => p.width));
-          const nextX = offsetX + colWidth;
-
-          if (nextX < area.x + area.width) {
-            const leftArea = {
-              x: area.x,
-              y: area.y,
-              width: colWidth,
-              height: area.height,
-            };
-            const rightArea = {
-              x: nextX,
-              y: area.y,
-              width: area.x + area.width - nextX,
-              height: area.height,
-            };
-            subdivideArea(leftArea, colPieces, level + 1);
-            subdivideArea(
-              rightArea,
-              piecesInArea.filter((p) => p.x >= nextX),
-              level + 1
-            );
-            return;
-          }
-        }
-      }
-    }
-
-    subdivideArea(
-      { x: 0, y: 0, width: boardWidth, height: boardHeight },
-      sortedPieces,
-      0
-    );
-
-    return areas;
-  }
-
-  // Generar cortes y áreas en cada render
-  const allCuts = generateGuillotineCuts(pieces, BOARD_WIDTH, BOARD_HEIGHT);
-  const allAreas = generateCutAreas(pieces, BOARD_WIDTH, BOARD_HEIGHT);
-
-  /**
-   * Dibuja un rectángulo draggable que representa cada pieza colocada.
-   */
-  const drawPiece = (piece) => (
-    <Group
-      key={piece.id}
-      x={piece.x}
-      y={piece.y}
-      draggable
-      onClick={() => setSelectedId(piece.id)}
-      onDblClick={() => {
-        setPieces((prev) =>
-          prev.map((p) =>
-            p.id === piece.id
-              ? {
-                  ...p,
-                  width: p.height,
-                  height: p.width,
-                  rotated: !p.rotated,
-                }
-              : p
-          )
-        );
-      }}
-      onDragEnd={(e) => {
-        const { x, y } = e.target.position();
-        const isOutside = x < 0 || y < 0 || x > BOARD_WIDTH || y > BOARD_HEIGHT;
-
-        const movedPiece = { ...piece, x: Math.round(x), y: Math.round(y) };
-        const others = pieces.filter((p) => p.id !== piece.id);
-
-        if (isOutside) {
-          // Si lo arrastró fuera del tablero, lo "liberamos"
-          setPieces((prev) => prev.filter((p) => p.id !== piece.id));
-          setFreePieces((prev) => [...prev, piece]);
-          setSelectedId(null);
-        } else if (checkCollision(movedPiece, others)) {
-          // Si colisiona, buscar nuevo hueco libre
-          const pos = findFirstAvailablePosition(piece, others);
-          if (pos) {
-            setPieces((prev) =>
-              prev.map((p) =>
-                p.id === piece.id ? { ...p, x: pos.x, y: pos.y } : p
-              )
-            );
-          } else {
-            // Si no hay espacio, lo liberamos también
-            setPieces((prev) => prev.filter((p) => p.id !== piece.id));
-            setFreePieces((prev) => [...prev, piece]);
-            setSelectedId(null);
-          }
-        } else {
-          // Si no hay colisión ni está fuera, guardamos la nueva posición
+        // “r” → rotar si sigue válida
+        if (e.key.toLowerCase() === "r") {
           setPieces((prev) =>
-            prev.map((p) => (p.id === piece.id ? movedPiece : p))
+            prev.map((p) => {
+              if (p.id === pid) {
+                const newW = p.height;
+                const newH = p.width;
+                if (
+                  newW >= minPieceWidth &&
+                  newH >= minPieceHeight &&
+                  newW <= maxPieceWidth &&
+                  newH <= maxPieceHeight
+                ) {
+                  return {
+                    ...p,
+                    width: newW,
+                    height: newH,
+                    rotated: !p.rotated,
+                  };
+                }
+              }
+              return p;
+            })
           );
         }
-      }}
-    >
-      <Rect
-        width={piece.width}
-        height={piece.height}
-        fill={selectedId === piece.id ? "#93c5fd" : "#cbd5e1"}
-        stroke="#dc2626"
-        strokeWidth={2}
-      />
-      <Text
-        text={`${piece.label}\n${piece.width}×${piece.height}`}
-        fontSize={14}
-        fill="#1f2937"
-        x={4}
-        y={4}
-      />
-    </Group>
-  );
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [pieces]);
 
-  /**
-   * Dibuja una línea punteada con su etiqueta de nivel (L{aLevel}).
-   */
-  const drawCutLine = (cut, index) => (
-    <Group key={`cut-${index}`}>
-      <Line
-        points={[cut.x1, cut.y1, cut.x2, cut.y2]}
-        stroke="#1d4ed8"
-        strokeWidth={2}
-        dash={[10, 5]}
-      />
-      <Text
-        text={`L${cut.aLevel}`}
-        fontSize={12}
-        fill="#1e40af"
-        x={(cut.x1 + cut.x2) / 2 - 10}
-        y={(cut.y1 + cut.y2) / 2 - 10}
-      />
-    </Group>
-  );
-
-  /**
-   * Manejador de drop: lee la pieza arrastrada, busca el primer hueco libre
-   * y la coloca allí; si no hay espacio, la devuelve a `freePieces`.
-   */
+  // —— 10. Manejar drop de piezas desencajadas (colocación automática) —— //
   function handleDrop(e) {
     e.preventDefault();
     const data = e.dataTransfer.getData("application/json");
     if (!data) return;
     const dropped = JSON.parse(data);
 
+    // Validar dimensiones
+    if (
+      dropped.width < minPieceWidth ||
+      dropped.height < minPieceHeight ||
+      dropped.width > maxPieceWidth ||
+      dropped.height > maxPieceHeight
+    ) {
+      return; // no colocamos piezas inválidas
+    }
+
+    // Encontrar hueco libre con gap/tolerance
     const pos = findFirstAvailablePosition(dropped, pieces);
     if (pos) {
       setPieces((prev) => [...prev, { ...dropped, x: pos.x, y: pos.y }]);
     } else {
       setFreePieces((prev) => [...prev, dropped]);
     }
-
-    // Quitarla de la lista original de piezas libres
+    // Quitar de freePieces original
     setFreePieces((prev) => prev.filter((p) => p.id !== dropped.id));
   }
 
@@ -459,14 +244,11 @@ export default function GuillotineEditor() {
       onDrop={handleDrop}
     >
       <h2 className="text-xl font-bold mb-3">
-        Editor Manual de Planos de Corte
+        FASE 3 – Gap y Tolerancia en Colisiones
       </h2>
 
-      {/* Espacio en blanco (sin botones de nivel) */}
-      <div className="mb-3"></div>
-
       <div className="flex gap-4">
-        {/* —— Área del tablero con Konva —— */}
+        {/* —— Lienzo Konva —— */}
         <div className="flex-1 border bg-gray-100">
           <Stage
             ref={stageRef}
@@ -476,90 +258,206 @@ export default function GuillotineEditor() {
             className="bg-gray-100"
           >
             <Layer>
-              {/* Contorno del tablero */}
+              {/* 2.1 Dibujar contorno del área útil */}
               <Rect
-                width={BOARD_WIDTH}
-                height={BOARD_HEIGHT}
+                x={usableArea.x}
+                y={usableArea.y}
+                width={usableArea.width}
+                height={usableArea.height}
                 fill="#f3f4f6"
                 stroke="#000"
                 strokeWidth={2}
               />
 
-              {/* Texto con dimensiones reales */}
+              {/* 2.2 Mostrar texto con dimensiones reales del área útil */}
               <Text
-                text={`${BOARD_WIDTH} × ${BOARD_HEIGHT}`}
+                text={`${usableArea.width} × ${usableArea.height}`}
                 fontSize={16}
                 fill="#374151"
-                x={BOARD_WIDTH - 160}
-                y={BOARD_HEIGHT - 24}
+                x={usableArea.x + usableArea.width - 160}
+                y={usableArea.y + usableArea.height - 24}
               />
 
-              {/* Dibujar todas las áreas (todos los niveles) */}
-              {allAreas.map((area, idx) => (
-                <Rect
-                  key={`area-${idx}`}
-                  x={area.x}
-                  y={area.y}
-                  width={area.width}
-                  height={area.height}
-                  fill="rgba(59, 130, 246, 0.08)"
-                  stroke="#3b82f6"
-                  strokeWidth={1}
-                  dash={[4, 2]}
-                />
-              ))}
+              {/* 5. Dibujar piezas con colisión gap/tolerance */}
+              {pieces.map((piece) => {
+                const valid = isDimensionValid(piece);
 
-              {/* Dibujar todas las líneas de corte (todos los niveles) */}
-              {allCuts.map((cut, idx) => drawCutLine(cut, idx))}
+                // Guardamos las coordenadas previas antes de arrastrar
+                let originalX = piece.x;
+                let originalY = piece.y;
 
-              {/* Dibuja cada pieza colocada */}
-              {pieces.map(drawPiece)}
+                const handleDragStart = () => {
+                  originalX = piece.x;
+                  originalY = piece.y;
+                };
+
+                const handleDragEnd = (e) => {
+                  const newX = Math.round(e.target.x());
+                  const newY = Math.round(e.target.y());
+                  const moved = { ...piece, x: newX, y: newY };
+
+                  // 1) ¿Está fuera del área útil? Si sí, lo "liberamos"
+                  const outside =
+                    newX < usableArea.x ||
+                    newY < usableArea.y ||
+                    newX + piece.width > usableArea.x + usableArea.width ||
+                    newY + piece.height > usableArea.y + usableArea.height;
+
+                  if (outside) {
+                    // Lo removemos de piezas colocadas y lo pasamos a freePieces
+                    setPieces((prev) => prev.filter((p) => p.id !== piece.id));
+                    setFreePieces((prev) => [...prev, piece]);
+                    return;
+                  }
+
+                  // 2) Comprobar colisión con gap/tolerance
+                  const collision = checkCollisionWithGap(
+                    moved,
+                    pieces.filter((p) => p.id !== piece.id)
+                  );
+                  if (collision) {
+                    // Si colisiona, revertimos posición del nodo Konva
+                    e.target.to({
+                      x: originalX,
+                      y: originalY,
+                      duration: 0.1,
+                    });
+                  } else {
+                    // Si todo OK, actualizamos estado
+                    setPieces((prev) =>
+                      prev.map((p) =>
+                        p.id === piece.id ? { ...p, x: newX, y: newY } : p
+                      )
+                    );
+                  }
+                };
+
+                const handleClick = () => {
+                  selectedIdRef.current = piece.id;
+                };
+
+                return (
+                  <Group
+                    key={piece.id}
+                    x={piece.x}
+                    y={piece.y}
+                    draggable={valid}
+                    onClick={handleClick}
+                    onDragStart={handleDragStart}
+                    onDragEnd={handleDragEnd}
+                  >
+                    {/* 5.a. Dibujar rectángulo del “gap” (área seguridad) */}
+                    <Rect
+                      x={-gap / 2}
+                      y={-gap / 2}
+                      width={piece.width + gap}
+                      height={piece.height + gap}
+                      fill="rgba(255,0,0,0.05)"
+                      listening={false}
+                    />
+                    {/* 5.b. Dibujar rectángulo principal de la pieza */}
+                    <Rect
+                      width={piece.width}
+                      height={piece.height}
+                      fill={valid ? "#cbd5e1" : "rgba(255,0,0,0.1)"}
+                      stroke={valid ? "#dc2626" : "#dc2626"}
+                      strokeWidth={valid ? 1 : 2}
+                    />
+                    <Text
+                      text={`${piece.label}`}
+                      fontSize={12}
+                      fill={valid ? "#1f2937" : "#b91c1c"}
+                      x={4}
+                      y={4}
+                    />
+                    {!valid && (
+                      <Text
+                        text="✕ Tamaño inválido"
+                        fontSize={10}
+                        fill="#b91c1c"
+                        x={4}
+                        y={piece.height - 14}
+                      />
+                    )}
+                  </Group>
+                );
+              })}
             </Layer>
           </Stage>
         </div>
 
-        {/* —— Columna de Piezas desencajadas —— */}
+        {/* —— Panel lateral “Piezas desencajadas” —— */}
         <div className="w-72 border rounded bg-white shadow p-4 flex flex-col gap-4">
-          <div>
-            <h3 className="text-lg font-semibold mb-2">
-              🧩 Piezas desencajadas
-            </h3>
-            <div className="flex flex-col gap-2 max-h-60 overflow-auto">
-              {freePieces.map((piece) => (
-                <button
-                  key={piece.id}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData(
-                      "application/json",
-                      JSON.stringify(piece)
-                    );
-                  }}
-                  onClick={() => {
-                    // Primero la quitamos de freePieces
-                    setFreePieces((prev) =>
-                      prev.filter((p) => p.id !== piece.id)
-                    );
-                    // Luego buscamos su posición libre
-                    const pos = findFirstAvailablePosition(piece, pieces);
-                    if (pos) {
-                      setPieces((prev) => [
-                        ...prev,
-                        { ...piece, x: pos.x, y: pos.y },
-                      ]);
-                    } else {
-                      // Si no cabe, la devolvemos a la lista
-                      setFreePieces((prev) => [...prev, piece]);
-                    }
-                  }}
-                  className="border px-3 py-2 rounded hover:bg-gray-100 text-left text-sm text-gray-700"
-                >
-                  {piece.label} ({piece.width}×{piece.height})
-                </button>
-              ))}
-            </div>
+          <h3 className="text-lg font-semibold mb-2">🧩 Piezas desencajadas</h3>
+          <div className="flex flex-col gap-2 max-h-60 overflow-auto">
+            {freePieces.map((piece) => (
+              <button
+                key={piece.id}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(
+                    "application/json",
+                    JSON.stringify(piece)
+                  );
+                }}
+                onClick={() => {
+                  // Validar dimensiones antes de intentar ubicar
+                  if (
+                    piece.width < minPieceWidth ||
+                    piece.height < minPieceHeight ||
+                    piece.width > maxPieceWidth ||
+                    piece.height > maxPieceHeight
+                  ) {
+                    return;
+                  }
+                  // Quitar de la lista de piezas libres
+                  setFreePieces((prev) =>
+                    prev.filter((p) => p.id !== piece.id)
+                  );
+                  // Buscar primer hueco libre con gap/tolerance
+                  const pos = findFirstAvailablePosition(piece, pieces);
+                  if (pos) {
+                    setPieces((prev) => [
+                      ...prev,
+                      { ...piece, x: pos.x, y: pos.y },
+                    ]);
+                  } else {
+                    // Si no cabe, devolvemos a freePieces
+                    setFreePieces((prev) => [...prev, piece]);
+                  }
+                }}
+                className="border px-3 py-2 rounded hover:bg-gray-100 text-left text-sm text-gray-700"
+              >
+                {piece.label} ({piece.width}×{piece.height})
+              </button>
+            ))}
           </div>
         </div>
+      </div>
+
+      {/* —— Descripción de la Fase 3 —— */}
+      <div className="mt-4 text-sm text-gray-700">
+        ▶ FASE 3 – Aplicamos “gap” y “tolerancia” en colisiones, y ahora:
+        <ul className="list-disc ml-5 mt-1">
+          <li>
+            Si arrastras una pieza <strong>completamente</strong> fuera del área
+            gris (área útil), esa pieza se mueve a “Piezas desencajadas”
+            (freePieces).
+          </li>
+          <li>
+            Para colocarla de nuevo, haz clic en el botón de esa pieza en el
+            panel derecho: buscará la primera posición viable (sin chocar gaps).
+          </li>
+          <li>
+            Si una pieza choca con otra al soltarla, “rebota” suavemente a su
+            posición anterior (nunca se superponen).
+          </li>
+          <li>
+            Cada pieza válida muestra su rectángulo de “gap” (área de seguridad
+            de <code>gap</code> mm) en rojo semitransparente; esos gaps no
+            pueden solaparse en ningún punto.
+          </li>
+        </ul>
       </div>
     </div>
   );
