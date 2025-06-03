@@ -5,31 +5,50 @@ import pattern from "./pattern.json";
 // —— 1. CONSTANTES GLOBALES —— //
 const BOARD_WIDTH = 2440;
 const BOARD_HEIGHT = 2150;
-const kerf = 3; // Ancho de sierra en mm
+
+// Ancho de sierra y márgenes para “gap” (espacio mínimo entre piezas)
+const kerf = 3; // ancho de sierra en mm
 const refiladoLeft = 2;
 const refiladoRight = 2;
 const refiladoTop = 2;
 const refiladoBottom = 2;
-const gap = 5; // Separación mínima entre piezas en mm
-const tolerance = 0.5; // Tolerancia de medición en mm
+const gap = 5; // separación mínima entre piezas en mm
+const tolerance = 0.5; // tolerancia de medición en mm
+
+// Tamaños mínimos/máximos de pieza
 const minPieceWidth = 50;
 const minPieceHeight = 50;
 const maxPieceWidth = BOARD_WIDTH;
 const maxPieceHeight = BOARD_HEIGHT;
-const cutSpeed = 300; // Velocidad de corte (mm/s)
-const feedSpeed = 1000; // Velocidad de avance (mm/s)
 
-export default function GuillotineEditor_Complete() {
-  // —— 2. ESTADOS PRINCIPALES —— //
+// Velocidades para cálculo de tiempo (no afectan lógica de corte, sólo estimación)
+const cutSpeed = 300; // mm/s
+const feedSpeed = 1000; // mm/s
+
+// Margen visual entre piezas (kerf + gap)
+// Al dibujar cada pieza la desplazamos kerf+gap ÷ 2 en X e Y y reducimos su ancho/alto en kerf+gap
+const pieceMargin = kerf + gap;
+
+// —— 2. ESTADOS PRINCIPALES —— //
+export default function CuttingPlanEditor() {
+  // Si es “alternado”, en cada recorte se decide H o V según proporción del subárea.
+  // Valores posibles: "alternado", "horizontal-first", "vertical-first"
+  const [cutOrientation, setCutOrientation] = useState("alternado");
+
+  // Lista de piezas “colocadas”
   const [pieces, setPieces] = useState([]);
+  // Lista de piezas “desencajadas” (pendientes de colocar)
   const [freePieces, setFreePieces] = useState([]);
+
+  // Escala para ajustar el lienzo en pantallas pequeñas
   const [scale, setScale] = useState(1);
-  const [cutOrientation, setCutOrientation] = useState("horizontal-first");
   const containerRef = useRef();
   const stageRef = useRef();
+
+  // Para trackear elemento clicado (rotación o borrado con teclado)
   const selectedIdRef = useRef(null);
 
-  // —— 3. Área útil (descontando refilados) —— //
+  // —— 3. Área útil del tablero (descontando refilados) —— //
   const usableArea = {
     x: refiladoLeft,
     y: refiladoTop,
@@ -37,7 +56,7 @@ export default function GuillotineEditor_Complete() {
     height: BOARD_HEIGHT - refiladoTop - refiladoBottom,
   };
 
-  // —— 4. FUNCIONES DE VALIDACIÓN —— //
+  // —— 4. VALIDACIONES —— //
   function isDimensionValid(piece) {
     return (
       piece.width >= minPieceWidth &&
@@ -48,7 +67,7 @@ export default function GuillotineEditor_Complete() {
   }
 
   function checkCollisionWithGap(piece, others) {
-    // Inflar la pieza candidata y las demás por gap/2 + tolerance
+    // Inflamos en gap/2 + tolerance para asegurar la separación mínima
     const inflPiece = {
       x: piece.x - gap / 2 - tolerance,
       y: piece.y - gap / 2 - tolerance,
@@ -72,6 +91,7 @@ export default function GuillotineEditor_Complete() {
   }
 
   function findFirstAvailablePosition(piece, others) {
+    // Recorremos en pasos de 10 mm dentro del área útil para ubicar la primera posición válida
     const step = 10;
     const startX = usableArea.x + gap / 2 + tolerance;
     const endX =
@@ -112,7 +132,7 @@ export default function GuillotineEditor_Complete() {
     return null;
   }
 
-  // —— 5. PACK VERTICAL DENTRO DE COLUMNA (empuje automático) —— //
+  // —— 5. Empuje vertical dentro de una misma columna —— //
   function packPiecesVertically(currentPieces) {
     const arr = [...currentPieces].sort((a, b) => {
       if (a.x === b.x) return a.y - b.y;
@@ -136,7 +156,7 @@ export default function GuillotineEditor_Complete() {
     return arr;
   }
 
-  // —— 6. PACK DENTRO DE CADA SUBÁREA (empuje por nivel) —— //
+  // —— 6. Empuje dentro de cada sub-área identificada (packWithinSubareas) —— //
   function packWithinSubareas(currentPieces, allAreas) {
     const grupos = {};
     currentPieces.forEach((p) => {
@@ -147,7 +167,14 @@ export default function GuillotineEditor_Complete() {
         const y0 = area.y;
         const x1 = area.x + area.width;
         const y1 = area.y + area.height;
-        if (p.x >= x0 && p.y >= y0 && p.x < x1 && p.y < y1) {
+        if (
+          p.x >= x0 &&
+          p.y >= y0 &&
+          p.x < x1 &&
+          p.y < y1 &&
+          p.x + p.width <= x1 + tolerance &&
+          p.y + p.height <= y1 + tolerance
+        ) {
           if (area.level > mejorLevel) {
             mejorLevel = area.level;
             mejorIdx = idx;
@@ -181,19 +208,15 @@ export default function GuillotineEditor_Complete() {
           nuevaLista.push(p);
         }
       } else {
-        // Nivel -1 significa: pieza que salió del tablero, la agregamos sin mover
+        // Nivel -1 = pieza fuera del tablero
         nuevaLista.push(...piezasGrupo.map((p) => ({ ...p })));
       }
     });
     return nuevaLista;
   }
 
-  // —— 7. generateCutAreas (idéntico a antes, pero recibe cutOrientation) —— //
-  function generateCutAreas(
-    piecesList,
-    areaRect,
-    cutOrientation = "horizontal-first"
-  ) {
+  // —— 7. generateCutAreas con “alternado” —— //
+  function generateCutAreas(piecesList, areaRect, cutOri) {
     const areas = [];
     const sorted = [...piecesList].sort((a, b) => a.y - b.y || a.x - b.x);
 
@@ -214,17 +237,23 @@ export default function GuillotineEditor_Complete() {
         height: area.height,
         level,
       });
-
-      if (items.length === 1) {
-        items[0].nivelDesprendimiento = level;
+      if (items.length <= 1) {
+        if (items.length === 1) items[0].nivelDesprendimiento = level;
         return;
       }
-      if (items.length <= 1) return;
 
       const canSplitH = new Set(items.map((p) => p.y)).size > 1;
       const canSplitV = new Set(items.map((p) => p.x)).size > 1;
 
-      if (cutOrientation === "horizontal-first") {
+      // Determinar orientación real si estamos en modo “alternado”
+      let orientationToUse = cutOri;
+      if (cutOri === "alternado") {
+        // Si area.width >= area.height → preferimos vertical, sino horizontal
+        orientationToUse =
+          area.width >= area.height ? "vertical-first" : "horizontal-first";
+      }
+
+      if (orientationToUse === "horizontal-first") {
         if (canSplitH) {
           const rows = groupBy(items, (p) => p.y);
           let offsetY = area.y;
@@ -354,12 +383,8 @@ export default function GuillotineEditor_Complete() {
     return areas;
   }
 
-  // —— 8. generateGuillotineCuts (ahora dibuja corte incluso con 1 sola pieza) —— //
-  function generateGuillotineCuts(
-    piecesList,
-    areaRect,
-    cutOrientation = "horizontal-first"
-  ) {
+  // —— 8. generateGuillotineCuts con “alternado” —— //
+  function generateGuillotineCuts(piecesList, areaRect, cutOri) {
     const cuts = [];
     let cutIndex = 0;
     const sorted = [...piecesList].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -374,11 +399,16 @@ export default function GuillotineEditor_Complete() {
     }
 
     function subdivide(area, items, level) {
-      // —— Si solo hay una pieza, igual creamos un primer corte —— //
       if (items.length === 1) {
         const p = items[0];
-        if (cutOrientation === "horizontal-first") {
-          // Dibujar corte horizontal justo debajo de la pieza
+        // Determinar orientación por defecto si “alternado”
+        let orientationToUse = cutOri;
+        if (cutOri === "alternado") {
+          orientationToUse =
+            area.width >= area.height ? "vertical-first" : "horizontal-first";
+        }
+
+        if (orientationToUse === "horizontal-first") {
           const cutY = p.y + p.height + kerf / 2;
           if (cutY < area.y + area.height) {
             cuts.push({
@@ -391,7 +421,6 @@ export default function GuillotineEditor_Complete() {
             });
           }
         } else {
-          // Dibujar corte vertical justo a la derecha de la pieza
           const cutX = p.x + p.width + kerf / 2;
           if (cutX < area.x + area.width) {
             cuts.push({
@@ -406,13 +435,19 @@ export default function GuillotineEditor_Complete() {
         }
         return;
       }
-      // Si no hay piezas o hay más de una pieza, seguimos recursivamente:
       if (items.length <= 1) return;
 
       const canSplitH = new Set(items.map((p) => p.y)).size > 1;
       const canSplitV = new Set(items.map((p) => p.x)).size > 1;
 
-      if (cutOrientation === "horizontal-first") {
+      // Determinar orientación real para este nivel
+      let orientationToUse = cutOri;
+      if (cutOri === "alternado") {
+        orientationToUse =
+          area.width >= area.height ? "vertical-first" : "horizontal-first";
+      }
+
+      if (orientationToUse === "horizontal-first") {
         if (canSplitH) {
           const rows = groupBy(items, (p) => p.y);
           let offsetY = area.y;
@@ -582,7 +617,7 @@ export default function GuillotineEditor_Complete() {
     return cuts;
   }
 
-  // —— 9. isFullyInsideAnySubarea —— //
+  // —— 9. Verifica si una pieza está 100% dentro de alguna sub-área —— //
   function isFullyInsideAnySubarea(piece, allAreas) {
     for (const area of allAreas) {
       const x0 = area.x;
@@ -592,8 +627,8 @@ export default function GuillotineEditor_Complete() {
       if (
         piece.x >= x0 &&
         piece.y >= y0 &&
-        piece.x + piece.width <= x1 &&
-        piece.y + piece.height <= y1
+        piece.x + piece.width <= x1 + tolerance &&
+        piece.y + piece.height <= y1 + tolerance
       ) {
         return true;
       }
@@ -601,15 +636,15 @@ export default function GuillotineEditor_Complete() {
     return false;
   }
 
-  // —— 10. Carga inicial de piezas desde pattern.json —— //
+  // —— 10. Carga inicial desde pattern.json —— //
   useEffect(() => {
     const data = pattern[0].layout[0];
-    const loaded = data.part.map((p) => {
+    const loaded = data.part.map((p, idx) => {
       const rotated = p.rotated === "True";
       const width = rotated ? parseFloat(p.length) : parseFloat(p.width);
       const height = rotated ? parseFloat(p.width) : parseFloat(p.length);
       return {
-        id: parseInt(p.part),
+        id: idx, // usamos índice como ID único
         label: `Pza ${p.nItem}`,
         width,
         height,
@@ -624,24 +659,25 @@ export default function GuillotineEditor_Complete() {
 
   // —— 11. Ajuste de escala al redimensionar ventana —— //
   useEffect(() => {
-    const resize = () => {
-      const containerWidth = containerRef.current?.offsetWidth || 1000;
-      const availableHeight = window.innerHeight - 160;
-      const scaleX = containerWidth / BOARD_WIDTH;
-      const scaleY = availableHeight / BOARD_HEIGHT;
+    function resize() {
+      const w = containerRef.current?.offsetWidth || 1000;
+      const h = window.innerHeight - 160;
+      const scaleX = w / BOARD_WIDTH;
+      const scaleY = h / BOARD_HEIGHT;
       setScale(Math.min(scaleX, scaleY, 1));
-    };
-    resize();
+    }
     window.addEventListener("resize", resize);
+    resize();
     return () => window.removeEventListener("resize", resize);
   }, []);
 
-  // —— 12. Manejo de teclas “Delete/Escape” y “R” para rotar —— //
+  // —— 12. Manejo de teclas: “Delete/Escape” y “R” para rotar —— //
   useEffect(() => {
-    const handleKeyDown = (e) => {
+    function handleKeyDown(e) {
       const pid = selectedIdRef.current;
       if (pid != null) {
         if (e.key === "Delete" || e.key === "Escape") {
+          // eliminar pieza
           const removed = pieces.find((p) => p.id === pid);
           if (removed) {
             setPieces((prev) => {
@@ -658,6 +694,7 @@ export default function GuillotineEditor_Complete() {
           selectedIdRef.current = null;
         }
         if (e.key.toLowerCase() === "r") {
+          // rotar pieza
           setPieces((prev) =>
             prev.map((p) => {
               if (p.id === pid) {
@@ -682,12 +719,12 @@ export default function GuillotineEditor_Complete() {
           );
         }
       }
-    };
+    }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [pieces, cutOrientation]);
 
-  // —— 13. Factories para DragStart / DragEnd —— //
+  // —— 13. DragStart / DragEnd para reposicionar piezas —— //
   function handleDragStartFactory(piece) {
     let originalX = piece.x;
     let originalY = piece.y;
@@ -699,11 +736,15 @@ export default function GuillotineEditor_Complete() {
 
   function handleDragEndFactory(piece, allAreasRef) {
     return (e) => {
-      const newX = Math.round(e.target.x());
-      const newY = Math.round(e.target.y());
-      const moved = { ...piece, x: newX, y: newY };
+      const newX = Math.round(e.target.x() - pieceMargin / 2);
+      const newY = Math.round(e.target.y() - pieceMargin / 2);
+      const moved = {
+        ...piece,
+        x: newX,
+        y: newY,
+      };
 
-      // 13.a. Si salió del área útil → liberamos
+      // 13.a. Si salió del área útil → lo liberamos
       const outside =
         newX < usableArea.x ||
         newY < usableArea.y ||
@@ -730,24 +771,24 @@ export default function GuillotineEditor_Complete() {
       );
       if (collision) {
         e.target.to({
-          x: piece.x,
-          y: piece.y,
+          x: piece.x + pieceMargin / 2,
+          y: piece.y + pieceMargin / 2,
           duration: 0.1,
         });
         return;
       }
 
-      // 13.c. Cruza línea de corte?
+      // 13.c. Cruza línea de corte? (debe quedar 100% dentro de alguna sub-área)
       if (!isFullyInsideAnySubarea(moved, allAreasRef.current)) {
         e.target.to({
-          x: piece.x,
-          y: piece.y,
+          x: piece.x + pieceMargin / 2,
+          y: piece.y + pieceMargin / 2,
           duration: 0.1,
         });
         return;
       }
 
-      // 13.d. Todas las validaciones pasaron → actualizamos pieza y repack
+      // 13.d. Validado → actualizar posición y repackear
       setPieces((prev) => {
         const nuevaLista = prev.map((p) =>
           p.id === piece.id ? { ...p, x: newX, y: newY } : p
@@ -800,7 +841,7 @@ export default function GuillotineEditor_Complete() {
     setFreePieces((prev) => prev.filter((p) => p.id !== dropped.id));
   }
 
-  // —— 15. useMemo para áreas y cortes —— //
+  // —— 15. useRef + useMemo para áreas y cortes —— //
   const allAreasRef = useRef([]);
   const allAreas = useMemo(() => {
     const a = generateCutAreas(pieces, usableArea, cutOrientation);
@@ -812,7 +853,7 @@ export default function GuillotineEditor_Complete() {
     return generateGuillotineCuts(pieces, usableArea, cutOrientation);
   }, [pieces, cutOrientation]);
 
-  // —— 16. Calcular tiempos estimados —— //
+  // —— 16. Cálculo de tiempos estimados (feed + cut) —— //
   let totalCutTime = 0;
   let totalFeedTime = 0;
   let posActual = { x: usableArea.x, y: usableArea.y };
@@ -833,24 +874,35 @@ export default function GuillotineEditor_Complete() {
       className="p-4"
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
+      style={{ background: "#f3f4f6", fontFamily: "sans-serif" }}
     >
-      <h2 className="text-xl font-bold mb-3">
+      <h2 className="text-2xl font-bold mb-3">
         Editor Manual de Planos de Corte
         <br />
-        <span className="text-base font-normal">
+        <span className="text-lg font-normal">
           (Fase 4 – Validación de Cortes + Empuje Automático)
         </span>
       </h2>
 
-      {/* —— 18. BOTONES: Primer corte Horizontal / Vertical —— */}
+      {/* —— 18. BOTONES: “Primer corte” con Alternado, Horizontal, Vertical —— */}
       <div className="mb-4 flex items-center gap-4">
         <span className="font-semibold">Primer corte:</span>
+        <button
+          onClick={() => setCutOrientation("alternado")}
+          className={`px-3 py-1 rounded ${
+            cutOrientation === "alternado"
+              ? "bg-blue-500 text-white"
+              : "bg-gray-200 text-gray-700"
+          }`}
+        >
+          Alternado
+        </button>
         <button
           onClick={() => setCutOrientation("horizontal-first")}
           className={`px-3 py-1 rounded ${
             cutOrientation === "horizontal-first"
               ? "bg-blue-500 text-white"
-              : "bg-gray-200"
+              : "bg-gray-200 text-gray-700"
           }`}
         >
           Horizontal
@@ -860,7 +912,7 @@ export default function GuillotineEditor_Complete() {
           className={`px-3 py-1 rounded ${
             cutOrientation === "vertical-first"
               ? "bg-blue-500 text-white"
-              : "bg-gray-200"
+              : "bg-gray-200 text-gray-700"
           }`}
         >
           Vertical
@@ -868,14 +920,14 @@ export default function GuillotineEditor_Complete() {
       </div>
 
       <div className="flex gap-4">
-        {/* —— 19. Lienzo Konva —— */}
-        <div className="flex-1 border bg-gray-100">
+        {/* —— 19. Canvas Konva —— */}
+        <div className="flex-1 border bg-gray-50">
           <Stage
             ref={stageRef}
             width={BOARD_WIDTH * scale}
             height={BOARD_HEIGHT * scale}
             scale={{ x: scale, y: scale }}
-            className="bg-gray-100"
+            className="bg-gray-50"
           >
             <Layer>
               {/* 19.a. Contorno del área útil */}
@@ -884,21 +936,21 @@ export default function GuillotineEditor_Complete() {
                 y={usableArea.y}
                 width={usableArea.width}
                 height={usableArea.height}
-                fill="#f3f4f6"
-                stroke="#000"
+                fill="#f9fafb"
+                stroke="#4b5563"
                 strokeWidth={2}
               />
 
-              {/* 19.b. Texto con dimensiones reales */}
+              {/* 19.b. Texto con dimensiones reales (más grande) */}
               <Text
                 text={`${usableArea.width} × ${usableArea.height}`}
-                fontSize={16}
+                fontSize={30}
                 fill="#374151"
-                x={usableArea.x + usableArea.width - 160}
-                y={usableArea.y + usableArea.height - 24}
+                x={usableArea.x + usableArea.width - 180}
+                y={usableArea.y + usableArea.height - 26}
               />
 
-              {/* 19.c. Dibujar todas las sub-áreas (nivel ≥ 1) */}
+              {/* 19.c. Dibujar sub-áreas (nivel ≥ 1) */}
               {allAreas
                 .filter((area) => area.level >= 1)
                 .map((area, idx) => (
@@ -908,14 +960,14 @@ export default function GuillotineEditor_Complete() {
                     y={area.y}
                     width={area.width}
                     height={area.height}
-                    fill="rgba(59, 130, 246, 0.08)"
+                    fill="rgba(59, 130, 246, 0.06)"
                     stroke="#3b82f6"
                     strokeWidth={1}
                     dash={[4, 2]}
                   />
                 ))}
 
-              {/* 19.d. Dibujar líneas de corte (todos los niveles) */}
+              {/* 19.d. Dibujar todas las líneas de corte */}
               {allCuts.map((cut, idx) => (
                 <Group key={`cut-${idx}`}>
                   <Line
@@ -926,7 +978,7 @@ export default function GuillotineEditor_Complete() {
                   />
                   <Text
                     text={`L${cut.aLevel}`}
-                    fontSize={12}
+                    fontSize={30}
                     fill="#1e40af"
                     x={(cut.x1 + cut.x2) / 2 - 10}
                     y={(cut.y1 + cut.y2) / 2 - 10}
@@ -934,14 +986,14 @@ export default function GuillotineEditor_Complete() {
                 </Group>
               ))}
 
-              {/* 19.e. Dibujar todas las piezas colocadas */}
+              {/* 19.e. Dibujar todas las piezas (colocadas) con pieceMargin y color claro */}
               {pieces.map((piece) => {
                 const valid = isDimensionValid(piece);
                 return (
                   <Group
                     key={piece.id}
-                    x={piece.x}
-                    y={piece.y}
+                    x={piece.x + pieceMargin / 2}
+                    y={piece.y + pieceMargin / 2}
                     draggable={valid}
                     onClick={() => {
                       selectedIdRef.current = piece.id;
@@ -949,25 +1001,16 @@ export default function GuillotineEditor_Complete() {
                     onDragStart={handleDragStartFactory(piece)}
                     onDragEnd={handleDragEndFactory(piece, allAreasRef)}
                   >
-                    {/* Gap semi-transparente */}
                     <Rect
-                      x={-gap / 2}
-                      y={-gap / 2}
-                      width={piece.width + gap}
-                      height={piece.height + gap}
-                      fill="rgba(255,0,0,0.05)"
-                      listening={false}
-                    />
-                    <Rect
-                      width={piece.width}
-                      height={piece.height}
-                      fill={valid ? "#cbd5e1" : "rgba(255,0,0,0.1)"}
-                      stroke={valid ? "#dc2626" : "#dc2626"}
+                      width={piece.width - pieceMargin}
+                      height={piece.height - pieceMargin}
+                      fill={valid ? "#a871eb" : "rgba(255,0,0,0.1)"}
+                      stroke={valid ? "#141117" : "#dc2626"}
                       strokeWidth={valid ? 1 : 2}
                     />
                     <Text
                       text={`${piece.label}`}
-                      fontSize={12}
+                      fontSize={30}
                       fill={valid ? "#1f2937" : "#b91c1c"}
                       x={4}
                       y={4}
@@ -975,10 +1018,10 @@ export default function GuillotineEditor_Complete() {
                     {!valid && (
                       <Text
                         text="✕ Tamaño inválido"
-                        fontSize={10}
+                        fontSize={20}
                         fill="#b91c1c"
                         x={4}
-                        y={piece.height - 14}
+                        y={piece.height - 18 - pieceMargin}
                       />
                     )}
                   </Group>
@@ -1003,6 +1046,7 @@ export default function GuillotineEditor_Complete() {
                   );
                 }}
                 onClick={() => {
+                  // Validar dimensiones antes de re-intentar ubicarla
                   if (
                     piece.width < minPieceWidth ||
                     piece.height < minPieceHeight ||
@@ -1051,43 +1095,47 @@ export default function GuillotineEditor_Complete() {
         ▶ FASE 4 – Validación de Cortes + Empuje Automático
         <ul className="list-disc ml-5 mt-1">
           <li>
-            El botón <code>“Primer corte: Horizontal / Vertical”</code> controla
-            el parámetro
-            <code>cutOrientation</code>. - <strong>horizontal-first:</strong>{" "}
-            primero intenta subdividir horizontalmente en cada nivel. -{" "}
-            <strong>vertical-first:</strong> primero intenta subdividir
-            verticalmente.
-          </li>
-          <li>
-            Ahora, <strong>generateGuillotineCuts</strong> dibuja la primera
-            línea de corte <em>incluso cuando solo hay 1 pieza</em>, según la
-            orientación inicial.
-          </li>
-          <li>
-            Si solo hay una pieza en el tablero, se forzará a que se dibuje el
-            “primer corte” justo debajo (o a la derecha) de esa pieza, sin
-            esperar a que aparezca una segunda pieza.
-          </li>
-          <li>
-            Tras cada movimiento/eliminación de pieza, la lógica:
-            <ol className="list-decimal ml-5">
+            <code>Primer corte:</code> ahora permite “Alternado”, “Horizontal” o
+            “Vertical”.
+            <ul className="list-disc ml-5 mt-1">
               <li>
-                Genera sub-áreas con <code>generateCutAreas</code>.
+                <strong>Alternado:</strong> en cada subdivisión se elige H o V
+                según la proporción del sub-área. (Si el sub-área es más ancha
+                que alta, corta vertical primero; si es más alta que ancha,
+                corta horizontal primero).
               </li>
               <li>
-                Empuja cada pieza dentro de su sub-área con{" "}
-                <code>packWithinSubareas</code>.
+                <strong>Horizontal:</strong> siempre primero intenta subdividir
+                horizontal en cada nivel, luego vertical.
               </li>
-            </ol>
+              <li>
+                <strong>Vertical:</strong> siempre primero intenta subdividir
+                vertical en cada nivel, luego horizontal.
+              </li>
+            </ul>
           </li>
           <li>
-            La validación de “no cruzar cortes” usa{" "}
-            <code>isFullyInsideAnySubarea</code>: la pieza debe quedar 100 %
-            dentro de alguna sub-área (de nivel ≥ 1) para aceptarse.
+            <code>pieceMargin = kerf + gap</code>: cada pieza se desplaza
+            <code>pieceMargin/2</code> en X e Y, y se reduce su ancho/alto en
+            <code>pieceMargin</code>, para que quede un canal donde se ven las
+            líneas punteadas de corte.
+          </li>
+          <li>
+            Tras cada movimiento o eliminación, se generan de nuevo las
+            sub-áreas (<code>generateCutAreas</code>) y se re-empacan las piezas
+            dentro de ellas (<code>packWithinSubareas</code>).
+          </li>
+          <li>
+            La validación de no cruzar cortes usa
+            <code>isFullyInsideAnySubarea</code>: cada pieza debe quedar 100%
+            dentro de alguna sub-área de nivel ≥1, sino revierte su posición.
+          </li>
+          <li>
+            Se estima el tiempo total de recorrido (feed + cut) usando
+            <code>feedSpeed</code> y <code>cutSpeed</code>, pero no se optimiza
+            la ruta.
           </li>
         </ul>
-        ▶ También se muestra el tiempo estimado de recorrido (feed + cut), sin
-        optimizar ruta.
       </div>
     </div>
   );
