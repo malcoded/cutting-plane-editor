@@ -1,9 +1,9 @@
-import EditorGuillotina from "./components/EditorGuillotina";
+import EditorPlanos from "./components/EditorPlanos";
 
 function App() {
   return (
     <div className="min-h-screen bg-gray-300">
-      <EditorGuillotina />
+      <EditorPlanos />
     </div>
   );
 }
