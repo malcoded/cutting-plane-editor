@@ -1,9 +1,9 @@
-import EditorPlanos from "./components/EditorPlanos";
+import CutPlanEditor from "./components/CutPlanEditor";
 
 function App() {
   return (
     <div className="min-h-screen bg-gray-300">
-      <EditorPlanos />
+      <CutPlanEditor />
     </div>
   );
 }
