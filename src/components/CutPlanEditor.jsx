@@ -68,17 +68,42 @@ export default function CutPlanEditor() {
   const applySnap = (id, x, y, w, h) => {
     let sx = x,
       sy = y;
+
+    // Snap to board edges
+    if (Math.abs(x - MARGIN) < SNAP_TOLERANCE) sx = MARGIN;
+    if (Math.abs(x + w - (BOARD_WIDTH + MARGIN)) < SNAP_TOLERANCE)
+      sx = BOARD_WIDTH + MARGIN - w;
+    if (Math.abs(y - MARGIN) < SNAP_TOLERANCE) sy = MARGIN;
+    if (Math.abs(y + h - (BOARD_HEIGHT + MARGIN)) < SNAP_TOLERANCE)
+      sy = BOARD_HEIGHT + MARGIN - h;
+
+    // Snap to other pieces
     for (const p of pieces) {
       if (p.id === id) continue;
       const pw = p.width * SCALE,
         ph = p.height * SCALE;
-      if (Math.abs(x - (p.x + pw)) < SNAP_TOLERANCE) sx = p.x + pw;
-      else if (Math.abs(x + w - p.x) < SNAP_TOLERANCE) sx = p.x - w;
-      if (Math.abs(y - (p.y + ph)) < SNAP_TOLERANCE) sy = p.y + ph;
-      else if (Math.abs(y + h - p.y) < SNAP_TOLERANCE) sy = p.y - h;
+
+      // Horizontal snaps
+      if (Math.abs(x - (p.x + pw + KERF)) < SNAP_TOLERANCE)
+        sx = p.x + pw + KERF;
+      else if (Math.abs(x + w + KERF - p.x) < SNAP_TOLERANCE)
+        sx = p.x - w - KERF;
+      else if (Math.abs(x - p.x) < SNAP_TOLERANCE) sx = p.x;
+      else if (Math.abs(x + w - (p.x + pw)) < SNAP_TOLERANCE) sx = p.x + pw - w;
+
+      // Vertical snaps
+      if (Math.abs(y - (p.y + ph + KERF)) < SNAP_TOLERANCE)
+        sy = p.y + ph + KERF;
+      else if (Math.abs(y + h + KERF - p.y) < SNAP_TOLERANCE)
+        sy = p.y - h - KERF;
+      else if (Math.abs(y - p.y) < SNAP_TOLERANCE) sy = p.y;
+      else if (Math.abs(y + h - (p.y + ph)) < SNAP_TOLERANCE) sy = p.y + ph - h;
     }
+
+    // Ensure piece stays within board bounds
     sx = Math.max(MARGIN, Math.min(sx, BOARD_WIDTH + MARGIN - w));
     sy = Math.max(MARGIN, Math.min(sy, BOARD_HEIGHT + MARGIN - h));
+
     return { x: sx, y: sy };
   };
 
@@ -145,31 +170,54 @@ export default function CutPlanEditor() {
     let newCuts = [];
     let newVCuts = [];
 
-    pieceArr.forEach((piece) => {
+    // Sort pieces by position to ensure consistent cutting order
+    const sortedPieces = [...pieceArr].sort((a, b) => {
+      if (Math.abs(a.y - b.y) < SNAP_TOLERANCE) {
+        return a.x - b.x;
+      }
+      return a.y - b.y;
+    });
+
+    sortedPieces.forEach((piece) => {
       const w = piece.width * SCALE;
       const h = piece.height * SCALE;
-      // find a region that exactly matches piece.x, piece.y
+
+      // Find the region that contains this piece
       const reg = newRegions.find(
         (r) =>
-          piece.x === r.x && piece.y === r.y && w <= r.width && h <= r.height
+          piece.x >= r.x &&
+          piece.y >= r.y &&
+          piece.x + w <= r.x + r.width &&
+          piece.y + h <= r.y + r.height
       );
-      if (!reg) return; // skip if not found (shouldn't happen)
 
-      // decide orientation based on current global selector
-      const orient =
-        cutOrientation === "vertical"
-          ? "vertical"
-          : cutOrientation === "horizontal"
-          ? "horizontal"
-          : "horizontal";
+      if (!reg) return;
 
-      if (orient === "vertical") {
+      // Validar que la pieza esté alineada a la esquina superior izquierda de la región
+      if (Math.abs(piece.x - reg.x) > 1 || Math.abs(piece.y - reg.y) > 1) {
+        return;
+      }
+
+      // Determine cut orientation based on available space
+      const canCutHorizontal = reg.width >= w && reg.height > h;
+      const canCutVertical = reg.height >= h && reg.width > w;
+
+      let orient = cutOrientation;
+      if (orient === "automatic") {
+        // Choose the orientation that maximizes the remaining space
+        const horizontalRemaining = reg.width * (reg.height - h);
+        const verticalRemaining = (reg.width - w) * reg.height;
+        orient =
+          horizontalRemaining >= verticalRemaining ? "horizontal" : "vertical";
+      }
+
+      if (orient === "vertical" && canCutVertical) {
         newVCuts.push({ x: piece.x + w });
         newRegions = [
           ...newRegions.filter((r) => r !== reg),
           ...splitRegionVertical(reg, w, h),
         ];
-      } else {
+      } else if (orient === "horizontal" && canCutHorizontal) {
         newCuts.push({ y: piece.y + h });
         newRegions = [
           ...newRegions.filter((r) => r !== reg),
@@ -177,6 +225,16 @@ export default function CutPlanEditor() {
         ];
       }
     });
+
+    // Remove duplicate cuts
+    newCuts = newCuts.filter(
+      (cut, index, self) =>
+        index === self.findIndex((c) => Math.abs(c.y - cut.y) < 1)
+    );
+    newVCuts = newVCuts.filter(
+      (cut, index, self) =>
+        index === self.findIndex((c) => Math.abs(c.x - cut.x) < 1)
+    );
 
     setRegions(newRegions);
     setCuts(newCuts);
@@ -292,7 +350,12 @@ export default function CutPlanEditor() {
                 ? "horizontal"
                 : "horizontal";
 
-            const snapped = { x: targetReg.x, y: targetReg.y };
+            // Asegura que se alinee con el borde superior izquierdo de la región objetivo
+            const snapped = {
+              x: Math.round(targetReg.x),
+              y: Math.round(targetReg.y),
+            };
+
             if (
               checkCollision(
                 null,
@@ -303,6 +366,14 @@ export default function CutPlanEditor() {
               )
             )
               return;
+
+            // Validación: la pieza debe estar alineada a la esquina superior izquierda de la región
+            if (
+              Math.abs(snapped.x - targetReg.x) > 1 ||
+              Math.abs(snapped.y - targetReg.y) > 1
+            ) {
+              return;
+            }
 
             setPieces((prev) => [...prev, { ...piece, ...snapped }]);
             setAvailablePieces((prev) => prev.filter((p) => p.id !== piece.id));
