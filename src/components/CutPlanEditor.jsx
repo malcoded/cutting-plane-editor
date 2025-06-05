@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Stage, Layer, Rect, Text, Line } from "react-konva";
+import Konva from "konva";
 
 /* --- Constantes de tablero y escala --- */
 const BOARD_WIDTH_MM = 2750;
@@ -13,7 +14,7 @@ const SNAP_TOLERANCE = SNAP_TOLERANCE_MM * SCALE;
 const MARGIN = 10;
 const KERF = 5 * SCALE; // espesor de sierra en px
 
-export default function CutPlanEditor() {
+function CutPlanEditor() {
   /* --- Estados principales --- */
   const [cutOrientation, setCutOrientation] = useState("automatic");
   const [pieces, setPieces] = useState([]); // piezas en tablero
@@ -54,9 +55,11 @@ export default function CutPlanEditor() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, pieces]);
 
   /* ---------- Funciones de ayuda ---------- */
+  // Verifica si una pieza colisiona con otras ya colocadas en el tablero
   const checkCollision = (id, x, y, w, h) =>
     pieces.some((p) => {
       if (p.id === id) return false;
@@ -65,6 +68,7 @@ export default function CutPlanEditor() {
       return !(x + w <= p.x || x >= p.x + pw || y + h <= p.y || y >= p.y + ph);
     });
 
+  // Aplica snapping inteligente al mover una pieza: ajusta su posición cerca de bordes o piezas vecinas
   const applySnap = (id, x, y, w, h) => {
     let sx = x,
       sy = y;
@@ -107,12 +111,14 @@ export default function CutPlanEditor() {
     return { x: sx, y: sy };
   };
 
+  // Registra una línea de corte horizontal (y evita duplicados)
   const addHorizontalCut = (y) => {
     if (y <= MARGIN || y >= BOARD_HEIGHT + MARGIN) return;
     setCuts((prev) =>
       prev.some((c) => Math.abs(c.y - y) < 1) ? prev : [...prev, { y }]
     );
   };
+  // Registra una línea de corte vertical (y evita duplicados)
   const addVerticalCut = (x) => {
     if (x <= MARGIN || x >= BOARD_WIDTH + MARGIN) return;
     setVCuts((prev) =>
@@ -120,6 +126,7 @@ export default function CutPlanEditor() {
     );
   };
 
+  // Divide una región en dos subregiones tras un corte horizontal tipo guillotina
   const splitRegionHorizontal = (reg, w, h) => {
     const below = {
       x: reg.x,
@@ -133,8 +140,10 @@ export default function CutPlanEditor() {
       width: reg.width - w - KERF,
       height: h,
     };
-    return [below, right].filter((r) => r.width > 0 && r.height > 0);
+    // Solo regiones válidas (al menos 30x30)
+    return [below, right].filter((r) => r.width >= 30 && r.height >= 30);
   };
+  // Divide una región en dos subregiones tras un corte vertical tipo guillotina
   const splitRegionVertical = (reg, w, h) => {
     const right = {
       x: reg.x + w + KERF,
@@ -148,9 +157,11 @@ export default function CutPlanEditor() {
       width: w,
       height: reg.height - h - KERF,
     };
-    return [right, below].filter((r) => r.width > 0 && r.height > 0);
+    // Solo regiones válidas (al menos 30x30)
+    return [right, below].filter((r) => r.width >= 30 && r.height >= 30);
   };
 
+  // Encuentra una región libre que pueda contener la pieza en la posición deseada
   const findRegionForPiece = (w, h, x, y) =>
     regions.find(
       (r) =>
@@ -162,6 +173,8 @@ export default function CutPlanEditor() {
         y + h <= r.y + r.height
     );
 
+  // Reconstruye el layout completo del tablero a partir de las piezas ubicadas,
+  // recalculando regiones libres y líneas de corte según las reglas de guillotina
   const rebuildLayoutFromPieces = (pieceArr) => {
     // Reset
     let newRegions = [
@@ -249,37 +262,86 @@ export default function CutPlanEditor() {
     // Libera la región que ocupaba la pieza (para que vuelva a estar disponible)
     const w = piece.width * SCALE;
     const h = piece.height * SCALE;
-    setRegions((prev) => [...prev, { x, y, width: w, height: h }]);
+    setRegions((prev) => {
+      const exists = prev.some(
+        (r) =>
+          Math.abs(r.x - x) < 1 &&
+          Math.abs(r.y - y) < 1 &&
+          Math.abs(r.width - w) < 1 &&
+          Math.abs(r.height - h) < 1
+      );
+      return exists ? prev : [...prev, { x, y, width: w, height: h }];
+    });
   };
 
   /* -------- DRAG: finalizar -------- */
   const handleDragEnd = (id, newX, newY, piece, node) => {
+    // Escalar dimensiones de la pieza
     const w = piece.width * SCALE,
       h = piece.height * SCALE;
+
+    // Aplicar snapping a la posición soltada
     const snapped = applySnap(id, newX, newY, w, h);
+
+    // Buscar región válida donde pueda ubicarse la pieza
     const targetReg = findRegionForPiece(w, h, snapped.x, snapped.y);
+
+    // Validar si no hay colisión con otras piezas
     const ok = targetReg && !checkCollision(id, snapped.x, snapped.y, w, h);
 
-    if (!ok) {
+    // ❌ Si está en una región pero no alineada al borde superior izquierdo → inválido
+    if (
+      targetReg &&
+      (Math.abs(snapped.x - targetReg.x) > 1 ||
+        Math.abs(snapped.y - targetReg.y) > 1)
+    ) {
       const { x, y } = prevPositions.current[id];
+      node.stop();
       node.position({ x, y });
       node.getLayer().batchDraw();
       setPieces((prev) => prev.map((p) => (p.id === id ? { ...p, x, y } : p)));
       return;
     }
 
-    /* --- actualizar pieza y re‑generar cortes + regiones --- */
+    // ❌ Si hay colisión o no hay región válida → devolver al panel libre
+    if (!ok) {
+      node.stop();
+      const original = prevPositions.current[id] || { x: MARGIN, y: MARGIN };
+      new Konva.Tween({
+        node,
+        duration: 0.3,
+        x: original.x,
+        y: original.y,
+        easing: Konva.Easings.EaseInOut,
+      }).play();
+
+      setPieces((prev) => prev.filter((p) => p.id !== id));
+      const currentPiece = pieces.find((p) => p.id === id);
+      if (currentPiece) {
+        setAvailablePieces((prev) =>
+          prev.find((p) => p.id === currentPiece.id)
+            ? prev
+            : [...prev, currentPiece]
+        );
+      }
+      return;
+    }
+
+    // ✅ Actualizar estado con la nueva posición y recalcular layout
     const updatedPieces = pieces.map((p) =>
       p.id === id ? { ...p, x: snapped.x, y: snapped.y } : p
     );
     setPieces(updatedPieces);
     rebuildLayoutFromPieces(updatedPieces);
-    // sincronizar nodo y estado
+
+    // Actualizar posición visual del nodo en el canvas
     node.position({ x: snapped.x, y: snapped.y });
     node.getLayer().batchDraw();
+    console.log(regions);
   };
 
   /* -------- Rotar pieza (doble clic) -------- */
+  // Rota una pieza 90° y verifica si aún encaja en su posición actual
   const rotatePiece = (id) => {
     setPieces((prev) =>
       prev.map((p) => {
@@ -380,24 +442,50 @@ export default function CutPlanEditor() {
 
             if (orient === "vertical") {
               addVerticalCut(snapped.x + piece.width * SCALE);
-              setRegions((prev) => [
-                ...prev.filter((r) => r !== targetReg),
-                ...splitRegionVertical(
+              setRegions((prev) => {
+                const newRegs = splitRegionVertical(
                   targetReg,
                   piece.width * SCALE,
                   piece.height * SCALE
-                ),
-              ]);
+                );
+                const filtered = [
+                  ...prev.filter((r) => r !== targetReg),
+                  ...newRegs,
+                ];
+                return filtered.filter(
+                  (r, i, arr) =>
+                    arr.findIndex(
+                      (rr) =>
+                        Math.abs(rr.x - r.x) < 1 &&
+                        Math.abs(rr.y - r.y) < 1 &&
+                        Math.abs(rr.width - r.width) < 1 &&
+                        Math.abs(rr.height - r.height) < 1
+                    ) === i
+                );
+              });
             } else {
               addHorizontalCut(snapped.y + piece.height * SCALE);
-              setRegions((prev) => [
-                ...prev.filter((r) => r !== targetReg),
-                ...splitRegionHorizontal(
+              setRegions((prev) => {
+                const newRegs = splitRegionHorizontal(
                   targetReg,
                   piece.width * SCALE,
                   piece.height * SCALE
-                ),
-              ]);
+                );
+                const filtered = [
+                  ...prev.filter((r) => r !== targetReg),
+                  ...newRegs,
+                ];
+                return filtered.filter(
+                  (r, i, arr) =>
+                    arr.findIndex(
+                      (rr) =>
+                        Math.abs(rr.x - r.x) < 1 &&
+                        Math.abs(rr.y - r.y) < 1 &&
+                        Math.abs(rr.width - r.width) < 1 &&
+                        Math.abs(rr.height - r.height) < 1
+                    ) === i
+                );
+              });
             }
           }}
           onDragOver={(e) => e.preventDefault()}
@@ -553,3 +641,5 @@ export default function CutPlanEditor() {
     </div>
   );
 }
+
+export default CutPlanEditor;
