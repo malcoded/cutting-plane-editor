@@ -413,6 +413,25 @@ function CutPlanEditor() {
     return { yStart, yEnd };
   };
 
+  // Determina el rango visible de un corte horizontal según obstáculos a la izquierda
+  const getHorizontalCutRange = (y) => {
+    let xStart = MARGIN;
+    let xEnd = BOARD_WIDTH + MARGIN;
+
+    for (const p of pieces) {
+      const py = p.y;
+      const ph = p.height * SCALE;
+      const px = p.x;
+      const pw = p.width * SCALE;
+
+      if (y > py && y < py + ph) {
+        if (px + pw > xStart) xStart = px + pw;
+      }
+    }
+
+    return { xStart, xEnd };
+  };
+
   /* ============== Render UI ============== */
   return (
     <div className="py-4 px-6">
@@ -627,15 +646,18 @@ function CutPlanEditor() {
 
             {/* Líneas de corte */}
             <Layer>
-              {cuts.map((c, i) => (
-                <Line
-                  key={i}
-                  points={[MARGIN, c.y, BOARD_WIDTH + MARGIN, c.y]}
-                  stroke="#ff0000"
-                  strokeWidth={1}
-                  dash={[4, 4]}
-                />
-              ))}
+              {cuts.map((c, i) => {
+                const { xStart, xEnd } = getHorizontalCutRange(c.y);
+                return (
+                  <Line
+                    key={i}
+                    points={[xStart, c.y, xEnd, c.y]}
+                    stroke="#ff0000"
+                    strokeWidth={1}
+                    dash={[4, 4]}
+                  />
+                );
+              })}
               {vCuts.map((c, i) => {
                 const { yStart, yEnd } = getVerticalCutRange(c.x);
                 return (
