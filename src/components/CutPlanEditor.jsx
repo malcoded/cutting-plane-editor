@@ -229,13 +229,12 @@ function CutPlanEditor() {
         return;
       }
 
-      // Determine cut orientation based on available space
+      // Determine cut orientation based on available space, preserving original cutDirection if present
       const canCutHorizontal = reg.width >= w && reg.height > h;
       const canCutVertical = reg.height >= h && reg.width > w;
 
-      let orient = cutOrientation;
+      let orient = piece.cutDirection || cutOrientation;
       if (orient === "automatic") {
-        // Choose the orientation that maximizes the remaining space
         const horizontalRemaining = reg.width * (reg.height - h);
         const verticalRemaining = (reg.width - w) * reg.height;
         orient =
@@ -503,7 +502,10 @@ function CutPlanEditor() {
               return;
             }
 
-            setPieces((prev) => [...prev, { ...piece, ...snapped }]);
+            setPieces((prev) => [
+              ...prev,
+              { ...piece, ...snapped, cutDirection: orient },
+            ]);
             setAvailablePieces((prev) => prev.filter((p) => p.id !== piece.id));
 
             if (orient === "vertical") {
