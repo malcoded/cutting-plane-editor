@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Stage, Layer, Rect, Text, Line } from "react-konva";
 import Konva from "konva";
 
@@ -39,18 +39,21 @@ function CutPlanEditor() {
         ["Escape", "Delete", "Backspace"].includes(e.key) &&
         selectedId !== null
       ) {
-        // quitar del tablero
-        setPieces((prev) => prev.filter((p) => p.id !== selectedId));
-        // devolver al panel libre si no está
+        const updated = pieces.filter((p) => p.id !== selectedId);
+        setPieces(updated);
+
+        // Devolver al panel libre si no está
         const removed = pieces.find((p) => p.id === selectedId);
         if (removed) {
           setAvailablePieces((prev) =>
             prev.find((p) => p.id === removed.id) ? prev : [...prev, removed]
           );
         }
+
         setSelectedId(null);
-        // Recalcular cortes y regiones basados en las piezas restantes
-        rebuildLayoutFromPieces(pieces.filter((p) => p.id !== selectedId));
+
+        // Reconstruir cortes y regiones como si esa pieza nunca hubiera existido
+        rebuildLayoutFromPieces(updated);
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -173,6 +176,21 @@ function CutPlanEditor() {
         y + h <= r.y + r.height
     );
 
+  // Verifica si un corte vertical es válido (no atraviesa otras piezas)
+  const isVerticalCutClear = (cutX, y, h, allPieces, currentPieceId) =>
+    !allPieces.some((p) => {
+      if (p.id === currentPieceId) return false;
+      const px = p.x;
+      const pw = p.width * SCALE;
+      const py = p.y;
+      const ph = p.height * SCALE;
+      return (
+        cutX > px &&
+        cutX < px + pw &&
+        ((py <= y && y < py + ph) || (py < y + h && y + h <= py + ph))
+      );
+    });
+
   // Reconstruye el layout completo del tablero a partir de las piezas ubicadas,
   // recalculando regiones libres y líneas de corte según las reglas de guillotina
   const rebuildLayoutFromPieces = (pieceArr) => {
@@ -225,11 +243,14 @@ function CutPlanEditor() {
       }
 
       if (orient === "vertical" && canCutVertical) {
-        newVCuts.push({ x: piece.x + w });
-        newRegions = [
-          ...newRegions.filter((r) => r !== reg),
-          ...splitRegionVertical(reg, w, h),
-        ];
+        const cutX = piece.x + w;
+        if (isVerticalCutClear(cutX, piece.y, h, sortedPieces, piece.id)) {
+          newVCuts.push({ x: cutX });
+          newRegions = [
+            ...newRegions.filter((r) => r !== reg),
+            ...splitRegionVertical(reg, w, h),
+          ];
+        }
       } else if (orient === "horizontal" && canCutHorizontal) {
         newCuts.push({ y: piece.y + h });
         newRegions = [
@@ -239,13 +260,17 @@ function CutPlanEditor() {
       }
     });
 
-    // Remove duplicate cuts
+    // Remove duplicate cuts and ensure cuts are within the board area
     newCuts = newCuts.filter(
       (cut, index, self) =>
+        cut.y > MARGIN &&
+        cut.y < MARGIN + BOARD_HEIGHT &&
         index === self.findIndex((c) => Math.abs(c.y - cut.y) < 1)
     );
     newVCuts = newVCuts.filter(
       (cut, index, self) =>
+        cut.x > MARGIN &&
+        cut.x < MARGIN + BOARD_WIDTH &&
         index === self.findIndex((c) => Math.abs(c.x - cut.x) < 1)
     );
 
@@ -296,7 +321,6 @@ function CutPlanEditor() {
         Math.abs(snapped.y - targetReg.y) > 1)
     ) {
       const { x, y } = prevPositions.current[id];
-      node.stop();
       node.position({ x, y });
       node.getLayer().batchDraw();
       setPieces((prev) => prev.map((p) => (p.id === id ? { ...p, x, y } : p)));
@@ -305,15 +329,19 @@ function CutPlanEditor() {
 
     // ❌ Si hay colisión o no hay región válida → devolver al panel libre
     if (!ok) {
-      node.stop();
       const original = prevPositions.current[id] || { x: MARGIN, y: MARGIN };
-      new Konva.Tween({
-        node,
-        duration: 0.3,
-        x: original.x,
-        y: original.y,
-        easing: Konva.Easings.EaseInOut,
-      }).play();
+      if (node && typeof node.to === "function") {
+        new Konva.Tween({
+          node,
+          duration: 0.3,
+          x: original.x,
+          y: original.y,
+          easing: Konva.Easings.EaseInOut,
+        }).play();
+      } else {
+        node.position({ x: original.x, y: original.y });
+        node.getLayer().batchDraw();
+      }
 
       setPieces((prev) => prev.filter((p) => p.id !== id));
       const currentPiece = pieces.find((p) => p.id === id);
@@ -364,6 +392,25 @@ function CutPlanEditor() {
         return fits ? rotated : p;
       })
     );
+  };
+
+  // Determina el rango visible de un corte vertical según obstáculos superiores
+  const getVerticalCutRange = (x) => {
+    let yStart = MARGIN;
+    let yEnd = BOARD_HEIGHT + MARGIN;
+
+    for (const p of pieces) {
+      const px = p.x;
+      const pw = p.width * SCALE;
+      const py = p.y;
+      const ph = p.height * SCALE;
+
+      if (x > px && x < px + pw) {
+        if (py + ph > yStart) yStart = py + ph;
+      }
+    }
+
+    return { yStart, yEnd };
   };
 
   /* ============== Render UI ============== */
@@ -589,15 +636,18 @@ function CutPlanEditor() {
                   dash={[4, 4]}
                 />
               ))}
-              {vCuts.map((c, i) => (
-                <Line
-                  key={`v${i}`}
-                  points={[c.x, MARGIN, c.x, BOARD_HEIGHT + MARGIN]}
-                  stroke="#ff0000"
-                  strokeWidth={1}
-                  dash={[4, 4]}
-                />
-              ))}
+              {vCuts.map((c, i) => {
+                const { yStart, yEnd } = getVerticalCutRange(c.x);
+                return (
+                  <Line
+                    key={`v${i}`}
+                    points={[c.x, yStart, c.x, yEnd]}
+                    stroke="#ff0000"
+                    strokeWidth={1}
+                    dash={[4, 4]}
+                  />
+                );
+              })}
             </Layer>
 
             {/* Regiones libres (debug) */}
