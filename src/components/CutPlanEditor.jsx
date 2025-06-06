@@ -18,6 +18,7 @@ function CutPlanEditor() {
   /* --- Estados principales --- */
   const [cutOrientation, setCutOrientation] = useState("automatic");
   const [pieces, setPieces] = useState([]); // piezas en tablero
+  console.log("🚀 ~ CutPlanEditor ~ pieces:", pieces);
   const [availablePieces, setAvailablePieces] = useState([
     // piezas libres
     { id: 1, name: "A", width: 400, height: 300 },
@@ -25,7 +26,13 @@ function CutPlanEditor() {
     { id: 3, name: "C", width: 200, height: 250 },
   ]);
   const [regions, setRegions] = useState([
-    { x: MARGIN, y: MARGIN, width: BOARD_WIDTH, height: BOARD_HEIGHT },
+    {
+      x: MARGIN,
+      y: MARGIN,
+      width: BOARD_WIDTH,
+      height: BOARD_HEIGHT,
+      direction: null,
+    },
   ]);
   const [cuts, setCuts] = useState([]); // horizontales
   const [vCuts, setVCuts] = useState([]); // verticales
@@ -158,12 +165,14 @@ function CutPlanEditor() {
       y: reg.y + h + KERF,
       width: reg.width,
       height: reg.height - h - KERF,
+      direction: null,
     };
     const right = {
       x: reg.x + w + KERF,
       y: reg.y,
       width: reg.width - w - KERF,
       height: h,
+      direction: null,
     };
     // Solo regiones válidas (al menos 30x30)
     return [below, right].filter((r) => r.width >= 30 && r.height >= 30);
@@ -175,12 +184,14 @@ function CutPlanEditor() {
       y: reg.y,
       width: reg.width - w - KERF,
       height: reg.height,
+      direction: null,
     };
     const below = {
       x: reg.x,
       y: reg.y + h + KERF,
       width: w,
       height: reg.height - h - KERF,
+      direction: null,
     };
     // Solo regiones válidas (al menos 30x30)
     return [right, below].filter((r) => r.width >= 30 && r.height >= 30);
@@ -258,17 +269,28 @@ function CutPlanEditor() {
         return;
       }
 
-      // Determine cut orientation based on available space, preserving original cutDirection if present
+      // Validar dirección de la región antes de permitir colocar pieza
+      let orient = piece.cutDirection || cutOrientation;
+      // Nueva lógica de orientación de corte y asignación a pieza:
+      if (reg.direction) {
+        // Si la región tiene dirección, usarla como orientación
+        orient = reg.direction;
+      } else {
+        // Si no tiene dirección aún, usar el estado global o forma de la pieza si está en automático
+        if (cutOrientation === "automatic") {
+          orient = w >= h ? "vertical" : "horizontal";
+        } else {
+          orient = cutOrientation;
+        }
+      }
+      piece.cutDirection = orient; // siempre actualizar dirección de corte final en la pieza
+      // Asignar dirección de corte a la región si aún no tiene
+      if (!reg.direction) {
+        reg.direction = orient;
+      }
+
       const canCutHorizontal = reg.width >= w && reg.height > h;
       const canCutVertical = reg.height >= h && reg.width > w;
-
-      let orient = piece.cutDirection || cutOrientation;
-      if (orient === "automatic") {
-        const horizontalRemaining = reg.width * (reg.height - h);
-        const verticalRemaining = (reg.width - w) * reg.height;
-        orient =
-          horizontalRemaining >= verticalRemaining ? "horizontal" : "vertical";
-      }
 
       if (orient === "vertical" && canCutVertical) {
         const cutX = piece.x + w;
@@ -323,7 +345,9 @@ function CutPlanEditor() {
           Math.abs(r.width - w) < 1 &&
           Math.abs(r.height - h) < 1
       );
-      return exists ? prev : [...prev, { x, y, width: w, height: h }];
+      return exists
+        ? prev
+        : [...prev, { x, y, width: w, height: h, direction: null }];
     });
   };
 
@@ -505,6 +529,8 @@ function CutPlanEditor() {
                 : cutOrientation === "horizontal"
                 ? "horizontal"
                 : "horizontal";
+
+            if (targetReg.direction && targetReg.direction !== orient) return;
 
             // Asegura que se alinee con el borde superior izquierdo de la región objetivo
             const snapped = {
