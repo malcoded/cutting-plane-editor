@@ -38,6 +38,9 @@ function CutPlanEditor() {
     { id: 2, name: "B", width: 300, height: 200 },
     { id: 3, name: "C", width: 200, height: 250 },
     { id: 4, name: "D", width: 100, height: 100 },
+    { id: 5, name: "E", width: 300, height: 200 },
+    { id: 6, name: "F", width: 300, height: 200 },
+    { id: 7, name: "G", width: 300, height: 200 },
   ]);
   const [regions, setRegions] = useState([
     {
@@ -649,6 +652,23 @@ function CutPlanEditor() {
               />
             </Layer>
 
+            {/* Regiones libres (debug) — debajo de todo */}
+            <Layer>
+              {regions.map((r, i) => (
+                <Rect
+                  key={i}
+                  x={r.x}
+                  y={r.y}
+                  width={r.width}
+                  height={r.height}
+                  fill={r.color}
+                  stroke="rgba(0,0,0,0.2)"
+                  dash={[2, 2]}
+                  listening={false}
+                />
+              ))}
+            </Layer>
+
             {/* Piezas */}
             <Layer>
               {pieces.map((piece) => (
@@ -719,22 +739,6 @@ function CutPlanEditor() {
                   stroke="#ff0000"
                   strokeWidth={1}
                   dash={[4, 4]}
-                />
-              ))}
-            </Layer>
-
-            {/* Regiones libres (debug) */}
-            <Layer>
-              {regions.map((r, i) => (
-                <Rect
-                  key={i}
-                  x={r.x}
-                  y={r.y}
-                  width={r.width}
-                  height={r.height}
-                  fill={r.color}
-                  stroke="rgba(0,0,0,0.2)"
-                  dash={[2, 2]}
                 />
               ))}
             </Layer>
