@@ -12,11 +12,24 @@ const BOARD_HEIGHT = BOARD_HEIGHT_MM * SCALE;
 const SNAP_TOLERANCE_MM = 30;
 const SNAP_TOLERANCE = SNAP_TOLERANCE_MM * SCALE;
 const MARGIN = 10;
+
 const KERF = 5 * SCALE; // espesor de sierra en px
+
+// Paleta de colores pastel semitransparentes para depurar regiones
+const REGION_COLORS = [
+  "rgba(255,236,179,0.4)", // pastel yellow
+  "rgba(187,222,251,0.4)", // pastel blue
+  "rgba(200,230,201,0.4)", // pastel green
+  "rgba(255,205,210,0.4)", // pastel red
+  "rgba(209,196,233,0.4)", // pastel violet
+];
+let regionColorIdx = 0;
+const nextRegionColor = () =>
+  REGION_COLORS[regionColorIdx++ % REGION_COLORS.length];
 
 function CutPlanEditor() {
   /* --- Estados principales --- */
-  const [cutOrientation, setCutOrientation] = useState("automatic");
+  const [cutOrientation, setCutOrientation] = useState("vertical");
   const [pieces, setPieces] = useState([]); // piezas en tablero
   console.log("🚀 ~ CutPlanEditor ~ pieces:", pieces);
   const [availablePieces, setAvailablePieces] = useState([
@@ -24,6 +37,7 @@ function CutPlanEditor() {
     { id: 1, name: "A", width: 400, height: 300 },
     { id: 2, name: "B", width: 300, height: 200 },
     { id: 3, name: "C", width: 200, height: 250 },
+    { id: 4, name: "D", width: 100, height: 100 },
   ]);
   const [regions, setRegions] = useState([
     {
@@ -32,6 +46,7 @@ function CutPlanEditor() {
       width: BOARD_WIDTH,
       height: BOARD_HEIGHT,
       direction: null,
+      color: nextRegionColor(),
     },
   ]);
   const [cuts, setCuts] = useState([]); // horizontales
@@ -166,6 +181,7 @@ function CutPlanEditor() {
       width: reg.width,
       height: reg.height - h - KERF,
       direction: null,
+      color: nextRegionColor(),
     };
     const right = {
       x: reg.x + w + KERF,
@@ -173,6 +189,7 @@ function CutPlanEditor() {
       width: reg.width - w - KERF,
       height: h,
       direction: null,
+      color: nextRegionColor(),
     };
     // Solo regiones válidas (al menos 30x30)
     return [below, right].filter((r) => r.width >= 30 && r.height >= 30);
@@ -185,6 +202,7 @@ function CutPlanEditor() {
       width: reg.width - w - KERF,
       height: reg.height,
       direction: null,
+      color: nextRegionColor(),
     };
     const below = {
       x: reg.x,
@@ -192,6 +210,7 @@ function CutPlanEditor() {
       width: w,
       height: reg.height - h - KERF,
       direction: null,
+      color: nextRegionColor(),
     };
     // Solo regiones válidas (al menos 30x30)
     return [right, below].filter((r) => r.width >= 30 && r.height >= 30);
@@ -229,7 +248,14 @@ function CutPlanEditor() {
   const rebuildLayoutFromPieces = (pieceArr) => {
     // Reset
     let newRegions = [
-      { x: MARGIN, y: MARGIN, width: BOARD_WIDTH, height: BOARD_HEIGHT },
+      {
+        x: MARGIN,
+        y: MARGIN,
+        width: BOARD_WIDTH,
+        height: BOARD_HEIGHT,
+        direction: null,
+        color: nextRegionColor(),
+      },
     ];
     let newCuts = [];
     let newVCuts = [];
@@ -269,25 +295,19 @@ function CutPlanEditor() {
         return;
       }
 
-      // Validar dirección de la región antes de permitir colocar pieza
-      let orient = piece.cutDirection || cutOrientation;
-      // Nueva lógica de orientación de corte y asignación a pieza:
-      if (reg.direction) {
-        // Si la región tiene dirección, usarla como orientación
-        orient = reg.direction;
-      } else {
-        // Si no tiene dirección aún, usar el estado global o forma de la pieza si está en automático
-        if (cutOrientation === "automatic") {
-          orient = w >= h ? "vertical" : "horizontal";
-        } else {
-          orient = cutOrientation;
-        }
-      }
-      piece.cutDirection = orient; // siempre actualizar dirección de corte final en la pieza
-      // Asignar dirección de corte a la región si aún no tiene
-      if (!reg.direction) {
-        reg.direction = orient;
-      }
+      // --- Orientación de corte coherente ---
+      // 1) Si la pieza YA tenía cutDirection, respétalo (no la queremos cambiar).
+      // 2) En caso contrario, si la región ya tiene dirección, usa esa.
+      // 3) Si nada de lo anterior, adopta la orientación global actual.
+      const orient = piece.cutDirection
+        ? piece.cutDirection
+        : reg.direction || cutOrientation;
+
+      // Fijar la dirección en la región si aún no existe
+      if (!reg.direction) reg.direction = orient;
+
+      // Si la pieza aún no tiene dirección, asígnale la orientación final
+      if (!piece.cutDirection) piece.cutDirection = orient;
 
       const canCutHorizontal = reg.width >= w && reg.height > h;
       const canCutVertical = reg.height >= h && reg.width > w;
@@ -295,14 +315,22 @@ function CutPlanEditor() {
       if (orient === "vertical" && canCutVertical) {
         const cutX = piece.x + w;
         if (isVerticalCutClear(cutX, piece.y, h, sortedPieces, piece.id)) {
-          newVCuts.push({ x: cutX });
+          newVCuts.push({
+            x: cutX,
+            yStart: reg.y,
+            yEnd: reg.y + reg.height,
+          });
           newRegions = [
             ...newRegions.filter((r) => r !== reg),
             ...splitRegionVertical(reg, w, h),
           ];
         }
       } else if (orient === "horizontal" && canCutHorizontal) {
-        newCuts.push({ y: piece.y + h });
+        newCuts.push({
+          y: piece.y + h,
+          xStart: reg.x,
+          xEnd: reg.x + reg.width,
+        });
         newRegions = [
           ...newRegions.filter((r) => r !== reg),
           ...splitRegionHorizontal(reg, w, h),
@@ -315,13 +343,21 @@ function CutPlanEditor() {
       (cut, index, self) =>
         cut.y > MARGIN &&
         cut.y < MARGIN + BOARD_HEIGHT &&
-        index === self.findIndex((c) => Math.abs(c.y - cut.y) < 1)
+        index ===
+          self.findIndex(
+            (c) =>
+              Math.abs(c.y - cut.y) < 1 && Math.abs(c.xStart - cut.xStart) < 1
+          )
     );
     newVCuts = newVCuts.filter(
       (cut, index, self) =>
         cut.x > MARGIN &&
         cut.x < MARGIN + BOARD_WIDTH &&
-        index === self.findIndex((c) => Math.abs(c.x - cut.x) < 1)
+        index ===
+          self.findIndex(
+            (c) =>
+              Math.abs(c.x - cut.x) < 1 && Math.abs(c.yStart - cut.yStart) < 1
+          )
     );
 
     setRegions(newRegions);
@@ -349,6 +385,12 @@ function CutPlanEditor() {
         ? prev
         : [...prev, { x, y, width: w, height: h, direction: null }];
     });
+
+    // Al iniciar el arrastre, eliminamos la orientación de la pieza
+    // para que al soltarla pueda adoptar la orientación global actual.
+    setPieces((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, cutDirection: null } : p))
+    );
   };
 
   /* -------- DRAG: finalizar -------- */
@@ -446,43 +488,7 @@ function CutPlanEditor() {
     );
   };
 
-  // Determina el rango visible de un corte vertical según obstáculos superiores
-  const getVerticalCutRange = (x) => {
-    let yStart = MARGIN;
-    let yEnd = BOARD_HEIGHT + MARGIN;
-
-    for (const p of pieces) {
-      const px = p.x;
-      const pw = p.width * SCALE;
-      const py = p.y;
-      const ph = p.height * SCALE;
-
-      if (x > px && x < px + pw) {
-        if (py + ph > yStart) yStart = py + ph;
-      }
-    }
-
-    return { yStart, yEnd };
-  };
-
-  // Determina el rango visible de un corte horizontal según obstáculos a la izquierda
-  const getHorizontalCutRange = (y) => {
-    let xStart = MARGIN;
-    let xEnd = BOARD_WIDTH + MARGIN;
-
-    for (const p of pieces) {
-      const py = p.y;
-      const ph = p.height * SCALE;
-      const px = p.x;
-      const pw = p.width * SCALE;
-
-      if (y > py && y < py + ph) {
-        if (px + pw > xStart) xStart = px + pw;
-      }
-    }
-
-    return { xStart, xEnd };
-  };
+  // getVerticalCutRange and getHorizontalCutRange are no longer used.
 
   /* ============== Render UI ============== */
   return (
@@ -495,7 +501,6 @@ function CutPlanEditor() {
           value={cutOrientation}
           onChange={(e) => setCutOrientation(e.target.value)}
         >
-          <option value="automatic">Automático</option>
           <option value="horizontal">Horizontal</option>
           <option value="vertical">Vertical</option>
         </select>
@@ -523,12 +528,7 @@ function CutPlanEditor() {
             );
             if (!targetReg || pieces.find((p) => p.id === piece.id)) return;
 
-            const orient =
-              cutOrientation === "vertical"
-                ? "vertical"
-                : cutOrientation === "horizontal"
-                ? "horizontal"
-                : "horizontal";
+            const orient = cutOrientation;
 
             if (targetReg.direction && targetReg.direction !== orient) return;
 
@@ -643,7 +643,7 @@ function CutPlanEditor() {
                 y={MARGIN}
                 width={BOARD_WIDTH}
                 height={BOARD_HEIGHT}
-                fill="#f1f5f9"
+                // fill="#f1f5f9"
                 stroke="#000"
                 strokeWidth={1}
               />
@@ -703,30 +703,24 @@ function CutPlanEditor() {
 
             {/* Líneas de corte */}
             <Layer>
-              {cuts.map((c, i) => {
-                const { xStart, xEnd } = getHorizontalCutRange(c.y);
-                return (
-                  <Line
-                    key={i}
-                    points={[xStart, c.y, xEnd, c.y]}
-                    stroke="#ff0000"
-                    strokeWidth={1}
-                    dash={[4, 4]}
-                  />
-                );
-              })}
-              {vCuts.map((c, i) => {
-                const { yStart, yEnd } = getVerticalCutRange(c.x);
-                return (
-                  <Line
-                    key={`v${i}`}
-                    points={[c.x, yStart, c.x, yEnd]}
-                    stroke="#ff0000"
-                    strokeWidth={1}
-                    dash={[4, 4]}
-                  />
-                );
-              })}
+              {cuts.map((c, i) => (
+                <Line
+                  key={i}
+                  points={[c.xStart, c.y, c.xEnd, c.y]}
+                  stroke="#ff0000"
+                  strokeWidth={1}
+                  dash={[4, 4]}
+                />
+              ))}
+              {vCuts.map((c, i) => (
+                <Line
+                  key={`v${i}`}
+                  points={[c.x, c.yStart, c.x, c.yEnd]}
+                  stroke="#ff0000"
+                  strokeWidth={1}
+                  dash={[4, 4]}
+                />
+              ))}
             </Layer>
 
             {/* Regiones libres (debug) */}
@@ -738,6 +732,7 @@ function CutPlanEditor() {
                   y={r.y}
                   width={r.width}
                   height={r.height}
+                  fill={r.color}
                   stroke="rgba(0,0,0,0.2)"
                   dash={[2, 2]}
                 />
