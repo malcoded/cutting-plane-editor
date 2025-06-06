@@ -39,21 +39,43 @@ function CutPlanEditor() {
         ["Escape", "Delete", "Backspace"].includes(e.key) &&
         selectedId !== null
       ) {
-        const updated = pieces.filter((p) => p.id !== selectedId);
-        setPieces(updated);
-
-        // Devolver al panel libre si no está
         const removed = pieces.find((p) => p.id === selectedId);
-        if (removed) {
-          setAvailablePieces((prev) =>
-            prev.find((p) => p.id === removed.id) ? prev : [...prev, removed]
+        if (!removed) return;
+
+        const areaX = removed.cutArea?.x ?? removed.x;
+        const areaY = removed.cutArea?.y ?? removed.y;
+        const areaX2 =
+          areaX + (removed.cutArea?.width ?? removed.width * SCALE);
+        const areaY2 =
+          areaY + (removed.cutArea?.height ?? removed.height * SCALE);
+
+        const children = pieces.filter((p) => {
+          const pw = p.width * SCALE;
+          const ph = p.height * SCALE;
+          const px = p.x;
+          const py = p.y;
+          return (
+            px < areaX2 && px + pw > areaX && py < areaY2 && py + ph > areaY
           );
-        }
+        });
 
+        const filtered = pieces.filter((p) => !children.includes(p));
+
+        setAvailablePieces((prev) => {
+          const newOnes = children
+            .filter((p) => !prev.find((ap) => ap.id === p.id))
+            .map((p) => ({
+              id: p.id,
+              name: p.name,
+              width: p.width,
+              height: p.height,
+            }));
+          return [...prev, ...newOnes];
+        });
+
+        setPieces(filtered);
         setSelectedId(null);
-
-        // Reconstruir cortes y regiones como si esa pieza nunca hubiera existido
-        rebuildLayoutFromPieces(updated);
+        rebuildLayoutFromPieces(filtered);
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -223,6 +245,13 @@ function CutPlanEditor() {
       );
 
       if (!reg) return;
+
+      piece.cutArea = {
+        x: reg.x,
+        y: reg.y,
+        width: reg.width,
+        height: reg.height,
+      };
 
       // Validar que la pieza esté alineada a la esquina superior izquierda de la región
       if (Math.abs(piece.x - reg.x) > 1 || Math.abs(piece.y - reg.y) > 1) {
