@@ -55,6 +55,8 @@ function CutPlanEditor() {
   const [cuts, setCuts] = useState([]); // horizontales
   const [vCuts, setVCuts] = useState([]); // verticales
   const [selectedId, setSelectedId] = useState(null);
+  // Índice de la sub‑región donde podría encajar la pieza arrastrada
+  const [hoverRegIdx, setHoverRegIdx] = useState(null);
   const prevPositions = useRef({}); // posición antes de arrastrar
 
   /* ---------- Manejo de teclado (ESC, DELETE) ---------- */
@@ -119,6 +121,17 @@ function CutPlanEditor() {
     });
 
   // Aplica snapping inteligente al mover una pieza: ajusta su posición cerca de bordes o piezas vecinas
+  // Helper to find region index that fits at a given coord
+  const regionIndexForPosition = (w, h, x, y) =>
+    regions.findIndex(
+      (r) =>
+        w <= r.width &&
+        h <= r.height &&
+        x >= r.x &&
+        y >= r.y &&
+        x + w <= r.x + r.width &&
+        y + h <= r.y + r.height
+    );
   const applySnap = (id, x, y, w, h) => {
     let sx = x,
       sy = y;
@@ -397,6 +410,7 @@ function CutPlanEditor() {
 
   /* -------- DRAG: iniciar -------- */
   const handleDragStart = (id, x, y, piece) => {
+    setHoverRegIdx(null);
     // Guarda posición previa por si hay que revertir
     prevPositions.current[id] = { x, y };
 
@@ -438,17 +452,27 @@ function CutPlanEditor() {
     // Validar si no hay colisión con otras piezas
     const ok = targetReg && !checkCollision(id, snapped.x, snapped.y, w, h);
 
-    // ❌ Si está en una región pero no alineada al borde superior izquierdo → inválido
-    if (
-      targetReg &&
-      (Math.abs(snapped.x - targetReg.x) > 1 ||
-        Math.abs(snapped.y - targetReg.y) > 1)
-    ) {
-      const { x, y } = prevPositions.current[id];
-      node.position({ x, y });
-      node.getLayer().batchDraw();
-      setPieces((prev) => prev.map((p) => (p.id === id ? { ...p, x, y } : p)));
-      return;
+    // Ajustar la pieza a la esquina sup‑izq de la sub‑región si está dentro de la tolerancia
+    if (targetReg) {
+      if (
+        Math.abs(snapped.x - targetReg.x) <= SNAP_TOLERANCE &&
+        Math.abs(snapped.y - targetReg.y) <= SNAP_TOLERANCE
+      ) {
+        snapped.x = targetReg.x;
+        snapped.y = targetReg.y;
+      } else if (
+        Math.abs(snapped.x - targetReg.x) > SNAP_TOLERANCE ||
+        Math.abs(snapped.y - targetReg.y) > SNAP_TOLERANCE
+      ) {
+        // Demasiado lejos → revertir
+        const { x, y } = prevPositions.current[id];
+        node.position({ x, y });
+        node.getLayer().batchDraw();
+        setPieces((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, x, y } : p))
+        );
+        return;
+      }
     }
 
     // ❌ Si hay colisión o no hay región válida → devolver al panel libre
@@ -485,6 +509,8 @@ function CutPlanEditor() {
     );
     setPieces(updatedPieces);
     rebuildLayoutFromPieces(updatedPieces);
+
+    setHoverRegIdx(null);
 
     // Actualizar posición visual del nodo en el canvas
     node.position({ x: snapped.x, y: snapped.y });
@@ -550,23 +576,56 @@ function CutPlanEditor() {
             const offsetX = e.clientX - rect.left - MARGIN;
             const offsetY = e.clientY - rect.top - MARGIN;
 
-            const targetReg = findRegionForPiece(
-              piece.width * SCALE,
-              piece.height * SCALE,
-              offsetX,
-              offsetY
+            // const targetReg = findRegionForPiece(
+            //   piece.width * SCALE,
+            //   piece.height * SCALE,
+            //   offsetX,
+            //   offsetY
+            // );
+            // if (!targetReg || pieces.find((p) => p.id === piece.id)) return;
+
+            // 1) región debajo del puntero, sin chequear todavía medidas
+            let targetReg = regions.find(
+              (r) =>
+                offsetX >= r.x &&
+                offsetX <= r.x + r.width &&
+                offsetY >= r.y &&
+                offsetY <= r.y + r.height
             );
+
+            // 2) si el puntero no cae en ninguna región, abortamos
             if (!targetReg || pieces.find((p) => p.id === piece.id)) return;
 
-            const orient = cutOrientation;
+            // 3) asegurarnos de que la pieza *cabe*; si no cabe, abortar
+            const wScaled = piece.width * SCALE;
+            const hScaled = piece.height * SCALE;
 
-            if (targetReg.direction && targetReg.direction !== orient) return;
+            if (wScaled > targetReg.width || hScaled > targetReg.height) return;
 
-            // Asegura que se alinee con el borde superior izquierdo de la región objetivo
-            const snapped = {
-              x: Math.round(targetReg.x),
-              y: Math.round(targetReg.y),
-            };
+            // Orientación final: si la sub‑región ya tiene dirección, la heredamos.
+            // En caso contrario usamos la orientación global actual y aplicamos
+            // un fallback inteligente si esa dirección no cabe.
+            let orient = targetReg.direction || cutOrientation;
+
+            // const wScaled = piece.width * SCALE;
+            // const hScaled = piece.height * SCALE;
+            const canCutHorizontal =
+              targetReg.width >= wScaled && targetReg.height > hScaled;
+            const canCutVertical =
+              targetReg.height >= hScaled && targetReg.width > wScaled;
+
+            if (orient === "vertical" && !canCutVertical && canCutHorizontal) {
+              orient = "horizontal";
+            } else if (
+              orient === "horizontal" &&
+              !canCutHorizontal &&
+              canCutVertical
+            ) {
+              orient = "vertical";
+            }
+
+            // Coloca la pieza exactamente en la esquina sup‑izq de la sub‑región
+            const snapped = { x: targetReg.x, y: targetReg.y };
 
             if (
               checkCollision(
@@ -578,14 +637,6 @@ function CutPlanEditor() {
               )
             )
               return;
-
-            // Validación: la pieza debe estar alineada a la esquina superior izquierda de la región
-            if (
-              Math.abs(snapped.x - targetReg.x) > 1 ||
-              Math.abs(snapped.y - targetReg.y) > 1
-            ) {
-              return;
-            }
 
             setPieces((prev) => [
               ...prev,
@@ -689,8 +740,9 @@ function CutPlanEditor() {
                   width={r.width}
                   height={r.height}
                   fill={r.color}
-                  stroke="rgba(0,0,0,0.2)"
-                  dash={[2, 2]}
+                  stroke={i === hoverRegIdx ? "#ff9800" : "rgba(0,0,0,0.2)"}
+                  strokeWidth={i === hoverRegIdx ? 3 : 1}
+                  dash={i === hoverRegIdx ? [] : [2, 2]}
                   listening={false}
                 />
               ))}
@@ -725,6 +777,18 @@ function CutPlanEditor() {
                         e.target
                       )
                     }
+                    onDragMove={(e) => {
+                      const node = e.target;
+                      const w = piece.width * SCALE;
+                      const h = piece.height * SCALE;
+                      const idx = regionIndexForPosition(
+                        w,
+                        h,
+                        node.x(),
+                        node.y()
+                      );
+                      setHoverRegIdx(idx >= 0 ? idx : null);
+                    }}
                     onDblClick={() => rotatePiece(piece.id)}
                   />
                   <Text
