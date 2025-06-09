@@ -299,21 +299,48 @@ function CutPlanEditor() {
       }
 
       // --- Orientación de corte coherente ---
-      // 1) Si la pieza YA tenía cutDirection, respétalo (no la queremos cambiar).
-      // 2) En caso contrario, si la región ya tiene dirección, usa esa.
-      // 3) Si nada de lo anterior, adopta la orientación global actual.
-      const orient = piece.cutDirection
+      // Prioridad:
+      // 1) Si la pieza ya trae cutDirection, se respeta.
+      // 2) Si la región tiene direction, se usa.
+      // 3) En otro caso, se emplea la orientación global.
+      let orient = piece.cutDirection
         ? piece.cutDirection
         : reg.direction || cutOrientation;
 
-      // Fijar la dirección en la región si aún no existe
-      if (!reg.direction) reg.direction = orient;
-
-      // Si la pieza aún no tiene dirección, asígnale la orientación final
-      if (!piece.cutDirection) piece.cutDirection = orient;
-
+      // Viabilidad de cortes en esta región
       const canCutHorizontal = reg.width >= w && reg.height > h;
       const canCutVertical = reg.height >= h && reg.width > w;
+
+      // Determine fallback orientation if the desired orientation is not viable
+      const determineFallbackOrientation = (
+        desired,
+        canVertical,
+        canHorizontal
+      ) => {
+        // If desired is vertical but not viable, switch to horizontal if possible
+        if (desired === "vertical" && !canVertical && canHorizontal) {
+          return "horizontal";
+        }
+        // If desired is horizontal but not viable, switch to vertical if possible
+        if (desired === "horizontal" && !canHorizontal && canVertical) {
+          return "vertical";
+        }
+        // Otherwise, retain the desired orientation
+        return desired;
+      };
+      if (!reg.direction || !piece.cutDirection) {
+        reg.direction = reg.direction || orient;
+        piece.cutDirection = piece.cutDirection || orient;
+      }
+      orient = determineFallbackOrientation(
+        orient,
+        canCutVertical,
+        canCutHorizontal
+      );
+
+      // Persistir la dirección final
+      if (!reg.direction) reg.direction = orient;
+      if (!piece.cutDirection) piece.cutDirection = orient;
 
       if (orient === "vertical" && canCutVertical) {
         const cutX = piece.x + w;
