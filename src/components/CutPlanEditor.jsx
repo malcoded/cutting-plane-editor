@@ -446,60 +446,49 @@ function CutPlanEditor() {
     // Aplicar snapping a la posición soltada
     const snapped = applySnap(id, newX, newY, w, h);
 
-    // Buscar región válida donde pueda ubicarse la pieza
-    const targetReg = findRegionForPiece(w, h, snapped.x, snapped.y);
+    /* ==== 1. Determinar la sub‑región destino de forma permisiva ==== */
 
-    // Validar si no hay colisión con otras piezas
-    const ok = targetReg && !checkCollision(id, snapped.x, snapped.y, w, h);
+    // a) Intento 1: la esquina después de aplicar snap
+    let reg = findRegionForPiece(w, h, snapped.x, snapped.y);
 
-    // Ajustar la pieza a la esquina sup‑izq de la sub‑región si está dentro de la tolerancia
-    if (targetReg) {
-      if (
-        Math.abs(snapped.x - targetReg.x) <= SNAP_TOLERANCE &&
-        Math.abs(snapped.y - targetReg.y) <= SNAP_TOLERANCE
-      ) {
-        snapped.x = targetReg.x;
-        snapped.y = targetReg.y;
-      } else if (
-        Math.abs(snapped.x - targetReg.x) > SNAP_TOLERANCE ||
-        Math.abs(snapped.y - targetReg.y) > SNAP_TOLERANCE
-      ) {
-        // Demasiado lejos → revertir
-        const { x, y } = prevPositions.current[id];
-        node.position({ x, y });
-        node.getLayer().batchDraw();
-        setPieces((prev) =>
-          prev.map((p) => (p.id === id ? { ...p, x, y } : p))
-        );
-        return;
+    // Imantar SIEMPRE a la esquina sup‑izq de la región destino
+    if (reg) {
+      snapped.x = reg.x;
+      snapped.y = reg.y;
+    }
+
+    // b) Intento 2: la región bajo el cursor, aunque la esquina aún no coincida
+    if (!reg) {
+      const cursorReg = regions.find(
+        (r) =>
+          newX >= r.x &&
+          newX <= r.x + r.width &&
+          newY >= r.y &&
+          newY <= r.y + r.height
+      );
+      if (cursorReg && w <= cursorReg.width && h <= cursorReg.height) {
+        reg = cursorReg;
+        // Imantamos la pieza a la esquina sup‑izq de la región
+        snapped.x = reg.x;
+        snapped.y = reg.y;
       }
     }
 
-    // ❌ Si hay colisión o no hay región válida → devolver al panel libre
-    if (!ok) {
-      const original = prevPositions.current[id] || { x: MARGIN, y: MARGIN };
-      if (node && typeof node.to === "function") {
-        new Konva.Tween({
-          node,
-          duration: 0.3,
-          x: original.x,
-          y: original.y,
-          easing: Konva.Easings.EaseInOut,
-        }).play();
-      } else {
-        node.position({ x: original.x, y: original.y });
-        node.getLayer().batchDraw();
-      }
+    // c) Si no encontramos ninguna región válida → revertir
+    if (!reg) {
+      const { x, y } = prevPositions.current[id];
+      node.position({ x, y });
+      node.getLayer().batchDraw();
+      setPieces((prev) => prev.map((p) => (p.id === id ? { ...p, x, y } : p)));
+      return;
+    }
 
-      setPieces((prev) => prev.filter((p) => p.id !== id));
-      const currentPiece = pieces.find((p) => p.id === id);
-      if (currentPiece) {
-        setAvailablePieces((prev) =>
-          prev.find((p) => p.id === currentPiece.id)
-            ? prev
-            : [...prev, currentPiece]
-        );
-      }
+    /* ==== 2. Comprobar colisión en su nueva posición ==== */
+    if (checkCollision(id, snapped.x, snapped.y, w, h)) {
+      const { x, y } = prevPositions.current[id];
+      node.position({ x, y });
+      node.getLayer().batchDraw();
+      setPieces((prev) => prev.map((p) => (p.id === id ? { ...p, x, y } : p)));
       return;
     }
 
