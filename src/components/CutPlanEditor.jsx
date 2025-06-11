@@ -67,6 +67,9 @@ function CutPlanEditor() {
   const [selectedId, setSelectedId] = useState(null);
   // Índice de la sub‑región donde podría encajar la pieza arrastrada
   const [hoverRegIdx, setHoverRegIdx] = useState(null);
+  // Pieza arrastrada que requiere confirmación de orientación
+  // {piece, region, x, y}
+  const [pendingPlacement, setPendingPlacement] = useState(null);
   const prevPositions = useRef({}); // posición antes de arrastrar
 
   // ---- Agrupación ordenada de piezas libres ----
@@ -569,6 +572,60 @@ function CutPlanEditor() {
     );
   };
 
+  const placePieceWithOrientation = (piece, targetReg, orient) => {
+    // Coordenada esquina sup‑izq siempre es la de la región
+    const snapped = { x: targetReg.x, y: targetReg.y };
+
+    // Añadir pieza al tablero
+    setPieces((prev) => [
+      ...prev,
+      { ...piece, ...snapped, cutDirection: orient },
+    ]);
+    setAvailablePieces((prev) => prev.filter((p) => p.id !== piece.id));
+
+    if (orient === "vertical") {
+      addVerticalCut(snapped.x + piece.width * SCALE);
+      setRegions((prev) => {
+        const newRegs = splitRegionVertical(
+          targetReg,
+          piece.width * SCALE,
+          piece.height * SCALE
+        );
+        const filtered = [...prev.filter((r) => r !== targetReg), ...newRegs];
+        return filtered.filter(
+          (r, i, arr) =>
+            arr.findIndex(
+              (rr) =>
+                Math.abs(rr.x - r.x) < 1 &&
+                Math.abs(rr.y - r.y) < 1 &&
+                Math.abs(rr.width - r.width) < 1 &&
+                Math.abs(rr.height - r.height) < 1
+            ) === i
+        );
+      });
+    } else {
+      addHorizontalCut(snapped.y + piece.height * SCALE);
+      setRegions((prev) => {
+        const newRegs = splitRegionHorizontal(
+          targetReg,
+          piece.width * SCALE,
+          piece.height * SCALE
+        );
+        const filtered = [...prev.filter((r) => r !== targetReg), ...newRegs];
+        return filtered.filter(
+          (r, i, arr) =>
+            arr.findIndex(
+              (rr) =>
+                Math.abs(rr.x - r.x) < 1 &&
+                Math.abs(rr.y - r.y) < 1 &&
+                Math.abs(rr.width - r.width) < 1 &&
+                Math.abs(rr.height - r.height) < 1
+            ) === i
+        );
+      });
+    }
+  };
+
   const handleReset = () => {
     regionColorIdx = 0; // Resetear contador de colores
     setPieces([]);
@@ -628,14 +685,6 @@ function CutPlanEditor() {
             const offsetX = e.clientX - rect.left - MARGIN;
             const offsetY = e.clientY - rect.top - MARGIN;
 
-            // const targetReg = findRegionForPiece(
-            //   piece.width * SCALE,
-            //   piece.height * SCALE,
-            //   offsetX,
-            //   offsetY
-            // );
-            // if (!targetReg || pieces.find((p) => p.id === piece.id)) return;
-
             // 1) región debajo del puntero, sin chequear todavía medidas
             let targetReg = regions.find(
               (r) =>
@@ -654,28 +703,6 @@ function CutPlanEditor() {
 
             if (wScaled > targetReg.width || hScaled > targetReg.height) return;
 
-            // Orientación final: si la sub‑región ya tiene dirección, la heredamos.
-            // En caso contrario usamos la orientación global actual y aplicamos
-            // un fallback inteligente si esa dirección no cabe.
-            let orient = targetReg.direction || cutOrientation;
-
-            // const wScaled = piece.width * SCALE;
-            // const hScaled = piece.height * SCALE;
-            const canCutHorizontal =
-              targetReg.width >= wScaled && targetReg.height > hScaled;
-            const canCutVertical =
-              targetReg.height >= hScaled && targetReg.width > wScaled;
-
-            if (orient === "vertical" && !canCutVertical && canCutHorizontal) {
-              orient = "horizontal";
-            } else if (
-              orient === "horizontal" &&
-              !canCutHorizontal &&
-              canCutVertical
-            ) {
-              orient = "vertical";
-            }
-
             // Coloca la pieza exactamente en la esquina sup‑izq de la sub‑región
             const snapped = { x: targetReg.x, y: targetReg.y };
 
@@ -690,59 +717,13 @@ function CutPlanEditor() {
             )
               return;
 
-            setPieces((prev) => [
-              ...prev,
-              { ...piece, ...snapped, cutDirection: orient },
-            ]);
-            setAvailablePieces((prev) => prev.filter((p) => p.id !== piece.id));
-
-            if (orient === "vertical") {
-              addVerticalCut(snapped.x + piece.width * SCALE);
-              setRegions((prev) => {
-                const newRegs = splitRegionVertical(
-                  targetReg,
-                  piece.width * SCALE,
-                  piece.height * SCALE
-                );
-                const filtered = [
-                  ...prev.filter((r) => r !== targetReg),
-                  ...newRegs,
-                ];
-                return filtered.filter(
-                  (r, i, arr) =>
-                    arr.findIndex(
-                      (rr) =>
-                        Math.abs(rr.x - r.x) < 1 &&
-                        Math.abs(rr.y - r.y) < 1 &&
-                        Math.abs(rr.width - r.width) < 1 &&
-                        Math.abs(rr.height - r.height) < 1
-                    ) === i
-                );
-              });
-            } else {
-              addHorizontalCut(snapped.y + piece.height * SCALE);
-              setRegions((prev) => {
-                const newRegs = splitRegionHorizontal(
-                  targetReg,
-                  piece.width * SCALE,
-                  piece.height * SCALE
-                );
-                const filtered = [
-                  ...prev.filter((r) => r !== targetReg),
-                  ...newRegs,
-                ];
-                return filtered.filter(
-                  (r, i, arr) =>
-                    arr.findIndex(
-                      (rr) =>
-                        Math.abs(rr.x - r.x) < 1 &&
-                        Math.abs(rr.y - r.y) < 1 &&
-                        Math.abs(rr.width - r.width) < 1 &&
-                        Math.abs(rr.height - r.height) < 1
-                    ) === i
-                );
-              });
-            }
+            // Guardar en estado para preguntar orientación, incluyendo posición del cursor
+            setPendingPlacement({
+              piece,
+              targetReg,
+              x: e.clientX,
+              y: e.clientY,
+            });
           }}
           onDragOver={(e) => e.preventDefault()}
         >
@@ -978,6 +959,58 @@ function CutPlanEditor() {
             })}
           </div>
         </div>
+        {/* Orientación Modal */}
+        {pendingPlacement && (
+          <div className="fixed inset-0 bg-black/40 z-50">
+            <div
+              className="absolute bg-white rounded shadow p-4 w-64"
+              style={{
+                left: pendingPlacement.x,
+                top: pendingPlacement.y,
+                transform: "translate(-50%, -50%)",
+              }}
+            >
+              <p className="mb-4 text-center">
+                ¿Orientación para&nbsp;
+                <b>{pendingPlacement.piece.name}</b>?
+              </p>
+              <div className="flex justify-around">
+                <button
+                  className="bg-blue-600 text-white px-3 py-1 rounded"
+                  onClick={() => {
+                    placePieceWithOrientation(
+                      pendingPlacement.piece,
+                      pendingPlacement.targetReg,
+                      "horizontal"
+                    );
+                    setPendingPlacement(null);
+                  }}
+                >
+                  Horizontal
+                </button>
+                <button
+                  className="bg-blue-600 text-white px-3 py-1 rounded"
+                  onClick={() => {
+                    placePieceWithOrientation(
+                      pendingPlacement.piece,
+                      pendingPlacement.targetReg,
+                      "vertical"
+                    );
+                    setPendingPlacement(null);
+                  }}
+                >
+                  Vertical
+                </button>
+              </div>
+              <button
+                className="block mx-auto mt-3 text-sm text-gray-500"
+                onClick={() => setPendingPlacement(null)}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
