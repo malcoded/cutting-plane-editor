@@ -30,8 +30,7 @@ function CutPlanEditor() {
   /* --- Estados principales --- */
   const [cutOrientation, setCutOrientation] = useState("vertical");
   const [pieces, setPieces] = useState([]); // piezas en tablero
-  console.log("🚀 ~ CutPlanEditor ~ pieces:", pieces);
-  const [availablePieces, setAvailablePieces] = useState([
+  const initialAvailablePieces = [
     // piezas libres
     { id: 1, name: "A", width: 400, height: 300 },
     { id: 2, name: "B", width: 300, height: 200 },
@@ -40,7 +39,11 @@ function CutPlanEditor() {
     { id: 5, name: "E", width: 300, height: 200 },
     { id: 6, name: "F", width: 300, height: 200 },
     { id: 7, name: "G", width: 300, height: 200 },
-  ]);
+    { id: 8, name: "H", width: 500, height: 300 },
+  ];
+  const [availablePieces, setAvailablePieces] = useState(
+    initialAvailablePieces
+  );
   const [regions, setRegions] = useState([
     {
       x: MARGIN,
@@ -532,22 +535,49 @@ function CutPlanEditor() {
     );
   };
 
-  // getVerticalCutRange and getHorizontalCutRange are no longer used.
+  const handleReset = () => {
+    regionColorIdx = 0; // Resetear contador de colores
+    setPieces([]);
+    setAvailablePieces([...initialAvailablePieces]);
+    setRegions([
+      {
+        x: MARGIN,
+        y: MARGIN,
+        width: BOARD_WIDTH,
+        height: BOARD_HEIGHT,
+        direction: null,
+        color: nextRegionColor(),
+      },
+    ]);
+    setCuts([]);
+    setVCuts([]);
+    setSelectedId(null);
+  };
 
   /* ============== Render UI ============== */
   return (
     <div className="py-4 px-6">
       {/* Selector de orientación */}
-      <div className="mb-3">
-        <label className="mr-2">Orientación de corte:</label>
-        <select
-          className="border px-2 py-1 rounded"
-          value={cutOrientation}
-          onChange={(e) => setCutOrientation(e.target.value)}
+      <div className="mb-6 flex items-center gap-1">
+        <div>
+          <label className="mr-2">Orientación de corte:</label>
+          <select
+            className="border px-2 py-1 rounded"
+            value={cutOrientation}
+            onChange={(e) => setCutOrientation(e.target.value)}
+          >
+            <option value="horizontal">Horizontal</option>
+            <option value="vertical">Vertical</option>
+          </select>
+        </div>
+
+        {/* Botón de Reset */}
+        <button
+          onClick={handleReset}
+          className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded"
         >
-          <option value="horizontal">Horizontal</option>
-          <option value="vertical">Vertical</option>
-        </select>
+          Reiniciar Tablero
+        </button>
       </div>
 
       <div className="flex gap-4">
