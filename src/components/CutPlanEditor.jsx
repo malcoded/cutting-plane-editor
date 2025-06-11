@@ -16,8 +16,6 @@ const MARGIN = 10;
 
 const KERF = 5 * SCALE; // espesor de sierra en px
 
-// Tamaño máximo (px) para las miniaturas de piezas en el panel lateral
-const THUMB_MAX = 140;
 // Dirección de veta del tablero: "" (sin especificar), "L" (veta paralela al eje Y / largo) o "A" (veta paralela al eje X / ancho)
 const GRAIN = ""; // cambiar a "L" o "A" según corresponda
 
