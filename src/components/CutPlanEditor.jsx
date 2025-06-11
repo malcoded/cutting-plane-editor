@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
+
 import { Stage, Layer, Rect, Text, Line } from "react-konva";
+import groupBy from "lodash/groupBy";
 
 /* --- Constantes de tablero y escala --- */
 const BOARD_WIDTH_MM = 2750;
@@ -13,6 +15,11 @@ const SNAP_TOLERANCE = SNAP_TOLERANCE_MM * SCALE;
 const MARGIN = 10;
 
 const KERF = 5 * SCALE; // espesor de sierra en px
+
+// Tamaño máximo (px) para las miniaturas de piezas en el panel lateral
+const THUMB_MAX = 140;
+// Dirección de veta del tablero: "" (sin especificar), "L" (veta paralela al eje Y / largo) o "A" (veta paralela al eje X / ancho)
+const GRAIN = ""; // cambiar a "L" o "A" según corresponda
 
 // Paleta de colores pastel semitransparentes para depurar regiones
 const REGION_COLORS = [
@@ -32,14 +39,15 @@ function CutPlanEditor() {
   const [pieces, setPieces] = useState([]); // piezas en tablero
   const initialAvailablePieces = [
     // piezas libres
-    { id: 1, name: "A", width: 400, height: 300 },
-    { id: 2, name: "B", width: 300, height: 200 },
-    { id: 3, name: "C", width: 200, height: 250 },
-    { id: 4, name: "D", width: 100, height: 100 },
-    { id: 5, name: "E", width: 300, height: 200 },
-    { id: 6, name: "F", width: 300, height: 200 },
-    { id: 7, name: "G", width: 300, height: 200 },
-    { id: 8, name: "H", width: 500, height: 300 },
+    { id: 1, name: "A", width: 400, height: 300, rotatable: false },
+    { id: 2, name: "B", width: 300, height: 200, rotatable: false },
+    { id: 3, name: "C", width: 200, height: 250, rotatable: false },
+    { id: 4, name: "D", width: 100, height: 100, rotatable: false },
+    { id: 5, name: "E", width: 300, height: 200, rotatable: false },
+    { id: 6, name: "F", width: 300, height: 200, rotatable: true },
+    { id: 7, name: "G", width: 300, height: 200, rotatable: true },
+    { id: 8, name: "H", width: 500, height: 300, rotatable: true },
+    { id: 9, name: "I", width: 2100, height: 300, rotatable: true },
   ];
   const [availablePieces, setAvailablePieces] = useState(
     initialAvailablePieces
@@ -60,6 +68,21 @@ function CutPlanEditor() {
   // Índice de la sub‑región donde podría encajar la pieza arrastrada
   const [hoverRegIdx, setHoverRegIdx] = useState(null);
   const prevPositions = useRef({}); // posición antes de arrastrar
+
+  // ---- Agrupación ordenada de piezas libres ----
+  const sizeGroups = useMemo(
+    () => groupBy(availablePieces, (p) => `${p.width}×${p.height}`),
+    [availablePieces]
+  );
+
+  // Orden estable: primero por ancho, luego alto
+  const orderedSizes = useMemo(() => {
+    return Object.keys(sizeGroups).sort((a, b) => {
+      const [w1, h1] = a.split("×").map(Number);
+      const [w2, h2] = b.split("×").map(Number);
+      return w1 === w2 ? h1 - h2 : w1 - w2;
+    });
+  }, [sizeGroups]);
 
   /* ---------- Manejo de teclado (ESC, DELETE) ---------- */
   useEffect(() => {
@@ -98,6 +121,7 @@ function CutPlanEditor() {
               name: p.name,
               width: p.width,
               height: p.height,
+              rotatable: p.rotatable ?? false,
             }));
           return [...prev, ...newOnes];
         });
@@ -511,26 +535,36 @@ function CutPlanEditor() {
 
   /* -------- Rotar pieza (doble clic) -------- */
   // Rota una pieza 90° y verifica si aún encaja en su posición actual
-  const rotatePiece = (id) => {
-    setPieces((prev) =>
+  // const rotatePiece = (id) => {
+  //   setPieces((prev) =>
+  //     prev.map((p) => {
+  //       if (p.id !== id) return p;
+  //       const rotated = { ...p, width: p.height, height: p.width };
+  //       const fits =
+  //         !checkCollision(
+  //           id,
+  //           rotated.x,
+  //           rotated.y,
+  //           rotated.width * SCALE,
+  //           rotated.height * SCALE
+  //         ) &&
+  //         findRegionForPiece(
+  //           rotated.width * SCALE,
+  //           rotated.height * SCALE,
+  //           rotated.x,
+  //           rotated.y
+  //         );
+  //       return fits ? rotated : p;
+  //     })
+  //   );
+  // };
+
+  // Rota una pieza que aún está en el panel de piezas libres
+  const rotateAvailablePiece = (id) => {
+    setAvailablePieces((prev) =>
       prev.map((p) => {
-        if (p.id !== id) return p;
-        const rotated = { ...p, width: p.height, height: p.width };
-        const fits =
-          !checkCollision(
-            id,
-            rotated.x,
-            rotated.y,
-            rotated.width * SCALE,
-            rotated.height * SCALE
-          ) &&
-          findRegionForPiece(
-            rotated.width * SCALE,
-            rotated.height * SCALE,
-            rotated.x,
-            rotated.y
-          );
-        return fits ? rotated : p;
+        if (p.id !== id || !p.rotatable) return p;
+        return { ...p, width: p.height, height: p.width };
       })
     );
   };
@@ -807,7 +841,6 @@ function CutPlanEditor() {
                       );
                       setHoverRegIdx(idx >= 0 ? idx : null);
                     }}
-                    onDblClick={() => rotatePiece(piece.id)}
                   />
                   <Text
                     x={piece.x + 5}
@@ -855,24 +888,95 @@ function CutPlanEditor() {
         </div>
 
         {/* -------- PANEL: PIEZAS LIBRES -------- */}
-        <div className="border-dashed border-2 border-cyan-700 rounded-sm w-[180px] p-3">
+        <div className="border-dashed border-2 border-cyan-700 rounded-sm w-full p-3 overflow-x-hidden">
           <p className="font-semibold mb-2">Piezas libres</p>
+          <div className="flex flex-wrap gap-2 w-full">
+            {/* Agrupar piezas por tamaño ordenadamente */}
+            {orderedSizes.map((size) => {
+              const group = sizeGroups[size];
+              if (!group.length) return null;
 
-          {availablePieces.map((piece) => (
-            <div
-              key={piece.id}
-              className="bg-blue-100 border border-blue-400 mb-2 px-2 py-1 text-sm cursor-pointer text-center"
-              draggable
-              onDragStart={(e) =>
-                e.dataTransfer.setData(
-                  "application/json",
-                  JSON.stringify(piece)
-                )
-              }
-            >
-              {piece.name} — {piece.width}×{piece.height}
-            </div>
-          ))}
+              // Tomamos la pieza en la cima del “stack”
+              const topPiece = group[0];
+              // Etiquetas A y L según la dirección de la veta
+              const aVal = GRAIN === "A" ? topPiece.height : topPiece.width;
+              const lVal = GRAIN === "A" ? topPiece.width : topPiece.height;
+
+              // Consideramos pequeña si cualquiera de sus dimensiones es ≤ 120mm
+              const isSmall = topPiece.width <= 120 || topPiece.height <= 120;
+
+              return (
+                <div key={size} className="break-inside-avoid">
+                  {/* Representación apilada: solo la pieza superior, con badge de cantidad */}
+                  <div
+                    className="relative bg-blue-100 border border-blue-400 cursor-pointer select-none"
+                    style={{
+                      width: `${topPiece.width * SCALE}px`,
+                      height: `${topPiece.height * SCALE}px`,
+                    }}
+                    draggable
+                    onDragStart={(e) =>
+                      e.dataTransfer.setData(
+                        "application/json",
+                        JSON.stringify(topPiece)
+                      )
+                    }
+                    title={`A:${aVal} L:${lVal} - ${topPiece.name}`}
+                  >
+                    {/* Icono para rotar */}
+                    {topPiece.rotatable && (
+                      <span
+                        className="absolute bottom-0 right-0 p-0.5 leading-none text-blue-700 hover:text-blue-900 cursor-pointer bg-white/70 rounded-bl-sm"
+                        title="Rotar"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          rotateAvailablePiece(topPiece.id);
+                        }}
+                      >
+                        ↻
+                      </span>
+                    )}
+
+                    {/* Badge con el total de piezas */}
+                    {group.length > 1 && (
+                      <span className="absolute -top-2 -right-2 bg-gray-700 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center">
+                        {group.length}
+                      </span>
+                    )}
+
+                    {/* Etiquetas internas solo si NO es pequeña */}
+                    {!isSmall && (
+                      <>
+                        <span className="absolute top-0 left-1/2 -translate-x-1/2 text-[11px] font-semibold pointer-events-none select-none">
+                          A:{aVal}
+                        </span>
+                        <span className="absolute top-1/2 left-[-9px] -translate-y-1/2 -rotate-90 origin-center text-[11px] font-semibold pointer-events-none select-none">
+                          L:{lVal}
+                        </span>
+                        <span className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold pointer-events-none select-none">
+                          {topPiece.name}
+                        </span>
+                      </>
+                    )}
+                    {/* Centered name for small pieces */}
+                    {isSmall && (
+                      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold pointer-events-none select-none">
+                        {topPiece.name}
+                      </span>
+                    )}
+                  </div>
+                  {/* Info block solo si es pequeña */}
+                  {isSmall && (
+                    <div className="text-center text-[11px] mt-1">
+                      <hr className="border-gray-400 mb-1 border-dashed" />
+                      <div>A:{aVal}</div>
+                      <div>L:{lVal}</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
