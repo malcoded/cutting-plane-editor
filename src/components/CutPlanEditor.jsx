@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Stage, Layer, Rect, Text, Line } from "react-konva";
-import Konva from "konva";
 
 /* --- Constantes de tablero y escala --- */
 const BOARD_WIDTH_MM = 2750;
