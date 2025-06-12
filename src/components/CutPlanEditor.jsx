@@ -65,10 +65,8 @@ function CutPlanEditor() {
       color: nextRegionColor(),
     },
   ]);
-  const [cuts, setCuts] = useState([]); // horizontales
-  console.log("🚀 ~ CutPlanEditor ~ cuts:", cuts);
-  const [vCuts, setVCuts] = useState([]); // verticales
-  console.log("🚀 ~ CutPlanEditor ~ vCuts:", vCuts);
+  const [_cuts, setCuts] = useState([]); // horizontales
+  const [_vCuts, setVCuts] = useState([]); // verticales
   const [selectedId, setSelectedId] = useState(null);
   // Índice de la sub‑región donde podría encajar la pieza arrastrada
   const [hoverRegIdx, setHoverRegIdx] = useState(null);
@@ -900,46 +898,12 @@ function CutPlanEditor() {
               ))}
             </Layer>
 
-            {/* Líneas de corte */}
-            <Layer>
-              {/* Cortes horizontales */}
-              {cuts.map((c, i) => (
-                <React.Fragment key={`h${c.order ?? i}`}>
-                  <Line
-                    points={[c.xStart, c.y, c.xEnd, c.y]}
-                    stroke="#ff0000"
-                    strokeWidth={1}
-                    dash={[4, 4]}
-                  />
-                  <Text
-                    x={c.xStart + 4}
-                    y={c.y - 12}
-                    text={String(c.order ?? i + 1)}
-                    fontSize={10}
-                    fill="#ff0000"
-                  />
-                </React.Fragment>
-              ))}
-
-              {/* Cortes verticales */}
-              {vCuts.map((c, i) => (
-                <React.Fragment key={`v${c.order ?? i}`}>
-                  <Line
-                    points={[c.x, c.yStart, c.x, c.yEnd]}
-                    stroke="#ff0000"
-                    strokeWidth={1}
-                    dash={[4, 4]}
-                  />
-                  <Text
-                    x={c.x + 4}
-                    y={c.yStart + 4}
-                    text={String(c.order ?? i + 1)}
-                    fontSize={10}
-                    fill="#ff0000"
-                  />
-                </React.Fragment>
-              ))}
-            </Layer>
+            {/*
+              ╭─────────────────────────────────────────────╮
+              │  Se ha deshabilitado la visualización de    │
+              │  líneas de corte para simplificar la vista. │
+              ╰─────────────────────────────────────────────╯
+            */}
           </Stage>
         </div>
 
