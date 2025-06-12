@@ -8,11 +8,16 @@ const BOARD_WIDTH_MM = 2750;
 const BOARD_HEIGHT_MM = 1830;
 const SCALE = 0.3;
 
-const BOARD_WIDTH = BOARD_WIDTH_MM * SCALE;
-const BOARD_HEIGHT = BOARD_HEIGHT_MM * SCALE;
+// Refilado (material que se descarta en los bordes) en milímetros
+const REFILADO_MM = 5;
+
+// Área útil = tablero completo menos refilado a ambos lados
+const BOARD_WIDTH = (BOARD_WIDTH_MM - 2 * REFILADO_MM) * SCALE;
+const BOARD_HEIGHT = (BOARD_HEIGHT_MM - 2 * REFILADO_MM) * SCALE;
 const SNAP_TOLERANCE_MM = 30;
 const SNAP_TOLERANCE = SNAP_TOLERANCE_MM * SCALE;
-const MARGIN = 10;
+// Margen en píxeles, derivado del refilado
+const MARGIN = REFILADO_MM * SCALE;
 
 const KERF = 5 * SCALE; // espesor de sierra en px
 
@@ -751,11 +756,22 @@ function CutPlanEditor() {
             {/* Fondo */}
             <Layer>
               <Rect
+                x={0}
+                y={0}
+                width={BOARD_WIDTH + 2 * MARGIN}
+                height={BOARD_HEIGHT + 2 * MARGIN}
+                fill="#edc328"
+                stroke="#000"
+                strokeWidth={0.5}
+                dash={[8, 8]}
+                listening={false}
+              />
+              <Rect
                 x={MARGIN}
                 y={MARGIN}
                 width={BOARD_WIDTH}
                 height={BOARD_HEIGHT}
-                // fill="#f1f5f9"
+                fill="#f1f5f9"
                 stroke="#000"
                 strokeWidth={1}
               />
