@@ -24,6 +24,15 @@ const KERF = 5 * SCALE; // espesor de sierra en px
 // Dirección de veta del tablero: "" (sin especificar), "L" (veta paralela al eje Y / largo) o "A" (veta paralela al eje X / ancho)
 const GRAIN = ""; // cambiar a "L" o "A" según corresponda
 
+const MIN_WASTE_MM = 30;
+const MIN_WASTE = MIN_WASTE_MM * SCALE; // px
+
+/**
+ * Retorna true si la pieza (en mm) está por debajo del umbral mínimo
+ * para ser colocada en el tablero.
+ */
+const isTooSmallPiece = (wMm, hMm) => wMm < MIN_WASTE_MM || hMm < MIN_WASTE_MM;
+
 // Paleta de colores pastel semitransparentes para depurar regiones
 const REGION_COLORS = [
   "rgba(255,236,179,0.4)", // pastel yellow
@@ -161,6 +170,7 @@ function CutPlanEditor() {
     { id: 7, name: "G", width: 300, height: 200, rotatable: true },
     { id: 8, name: "H", width: 500, height: 300, rotatable: true },
     { id: 9, name: "I", width: 2100, height: 300, rotatable: true },
+    // { id: 10, name: "J", width: 20, height: 29, rotatable: false },
   ];
   const [availablePieces, setAvailablePieces] = useState(
     initialAvailablePieces
@@ -184,6 +194,11 @@ function CutPlanEditor() {
   // {piece, region, x, y}
   // const [pendingPlacement, setPendingPlacement] = useState(null);
   const prevPositions = useRef({}); // posición antes de arrastrar
+
+  // Guarda las coordenadas de cortes que ya consumieron kerf,
+  // así no lo descontamos dos veces entre piezas adyacentes.
+  const usedVerticalCuts = useRef(new Set()); // valores X en px
+  const usedHorizontalCuts = useRef(new Set()); // valores Y en px
 
   // ---- Agrupación ordenada de piezas libres ----
   const sizeGroups = useMemo(
@@ -245,6 +260,16 @@ function CutPlanEditor() {
         setPieces(filtered);
         setSelectedId(null);
         rebuildLayoutFromPieces(filtered);
+      } else if (e.key?.toLowerCase() === "v") {
+        // Cambia la orientación de corte al presionar "V"
+        setCutOrientation((prev) =>
+          prev === "vertical" ? "horizontal" : "vertical"
+        );
+      } else if (e.key?.toLowerCase() === "h") {
+        // Cambia la orientación de corte al presionar "H"
+        setCutOrientation((prev) =>
+          prev === "horizontal" ? "vertical" : "horizontal"
+        );
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -389,24 +414,37 @@ function CutPlanEditor() {
    * @returns {Region[]}  Array (hasta 2) de sub‑regiones válidas
    */
   const splitRegionHorizontal = (reg, w, h) => {
+    const cutY = reg.y + h;
+    const kerfOffset = usedHorizontalCuts.current.has(cutY) ? 0 : KERF;
+    if (!usedHorizontalCuts.current.has(cutY)) {
+      usedHorizontalCuts.current.add(cutY);
+    }
     const below = {
       x: reg.x,
-      y: reg.y + h + KERF,
+      y: reg.y + h + kerfOffset,
       width: reg.width,
-      height: reg.height - h - KERF,
+      height: reg.height - h - kerfOffset,
       direction: null,
       color: nextRegionColor(),
     };
     const right = {
-      x: reg.x + w + KERF,
+      x: reg.x + w + kerfOffset,
       y: reg.y,
-      width: reg.width - w - KERF,
+      width: reg.width - w - kerfOffset,
       height: h,
       direction: null,
       color: nextRegionColor(),
     };
-    // Solo regiones válidas (al menos 30x30)
-    return [below, right].filter((r) => r.width >= 30 && r.height >= 30);
+    // Filtra sub‑regiones con dimensión válida (≥30×30 px)
+    const subRegions = [below, right].filter(
+      (r) => r.width >= 30 && r.height >= 30
+    );
+
+    // Si ninguna sub‑región supera el umbral, mantenemos la región original
+    if (subRegions.length === 0) return [reg];
+
+    // Si queda exactamente una sub‑región válida, usamos solo esa
+    return subRegions;
   };
 
   /**
@@ -420,24 +458,33 @@ function CutPlanEditor() {
    * @returns {Region[]}  Array (hasta 2) de sub‑regiones válidas
    */
   const splitRegionVertical = (reg, w, h) => {
+    const cutX = reg.x + w; // posición real del corte
+    const kerfOffset = usedVerticalCuts.current.has(cutX) ? 0 : KERF;
+    if (!usedVerticalCuts.current.has(cutX)) {
+      usedVerticalCuts.current.add(cutX);
+    }
     const right = {
-      x: reg.x + w + KERF,
+      x: reg.x + w + kerfOffset,
       y: reg.y,
-      width: reg.width - w - KERF,
+      width: reg.width - w - kerfOffset,
       height: reg.height,
       direction: null,
       color: nextRegionColor(),
     };
     const below = {
       x: reg.x,
-      y: reg.y + h + KERF,
+      y: reg.y + h + kerfOffset,
       width: w,
-      height: reg.height - h - KERF,
+      height: reg.height - h - kerfOffset,
       direction: null,
       color: nextRegionColor(),
     };
-    // Solo regiones válidas (al menos 30x30)
-    return [right, below].filter((r) => r.width >= 30 && r.height >= 30);
+    const subRegions = [right, below].filter(
+      (r) => r.width >= 30 && r.height >= 30
+    );
+
+    if (subRegions.length === 0) return [reg];
+    return subRegions;
   };
 
   /**
@@ -576,19 +623,18 @@ function CutPlanEditor() {
         // Otherwise, retain the desired orientation
         return desired;
       };
-      if (!reg.direction || !piece.cutDirection) {
-        reg.direction = reg.direction || orient;
-        piece.cutDirection = piece.cutDirection || orient;
-      }
       orient = determineFallbackOrientation(
         orient,
         canCutVertical,
         canCutHorizontal
       );
 
-      // Persistir la dirección final
+      // --- Persistir la dirección final ---
+      // Solo fijamos direction en la región la primera vez que se corta;
+      // así una sub‑región nacida de un corte vertical aún puede recibir
+      // cortes horizontales en el futuro.
       if (!reg.direction) reg.direction = orient;
-      if (!piece.cutDirection) piece.cutDirection = orient;
+      piece.cutDirection = orient;
 
       if (orient === "vertical" && canCutVertical) {
         const cutX = piece.x + w;
@@ -685,6 +731,9 @@ function CutPlanEditor() {
     // Escalar dimensiones de la pieza
     const w = piece.width * SCALE,
       h = piece.height * SCALE;
+
+    // Abortamos si la pieza es menor al umbral mínimo permitido
+    if (isTooSmallPiece(piece.width, piece.height)) return;
 
     // Aplicar snapping a la posición soltada
     const snapped = applySnap(id, newX, newY, w, h);
@@ -865,6 +914,8 @@ function CutPlanEditor() {
     setCuts([]);
     setVCuts([]);
     setSelectedId(null);
+    usedVerticalCuts.current.clear();
+    usedHorizontalCuts.current.clear();
   };
 
   /**
@@ -877,6 +928,10 @@ function CutPlanEditor() {
   const handleDrop = (e) => {
     e.preventDefault();
     const piece = JSON.parse(e.dataTransfer.getData("application/json"));
+
+    // No permitir piezas más pequeñas que el desperdicio mínimo
+    if (isTooSmallPiece(piece.width, piece.height)) return;
+
     const rect = e.currentTarget.getBoundingClientRect();
     const offsetX = e.clientX - rect.left - MARGIN;
     const offsetY = e.clientY - rect.top - MARGIN;
