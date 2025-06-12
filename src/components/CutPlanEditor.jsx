@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 
-import { Stage, Layer, Rect, Text, Line } from "react-konva";
+import { Stage, Layer, Rect, Text } from "react-konva";
 import groupBy from "lodash/groupBy";
 
 /* --- Constantes de tablero y escala --- */
@@ -33,8 +33,118 @@ const REGION_COLORS = [
   "rgba(209,196,233,0.4)", // pastel violet
 ];
 let regionColorIdx = 0;
+
 const nextRegionColor = () =>
   REGION_COLORS[regionColorIdx++ % REGION_COLORS.length];
+
+/* ---------- Sub‑componentes presentacionales ---------- */
+const PieceRect = ({
+  piece,
+  isSelected,
+  SCALE,
+  onClick,
+  onDragStart,
+  onDragEnd,
+  onDragMove,
+}) => (
+  <>
+    <Rect
+      x={piece.x}
+      y={piece.y}
+      width={piece.width * SCALE}
+      height={piece.height * SCALE}
+      fill="#60a5fa"
+      stroke={isSelected ? "#ff9800" : "#1e3a8a"}
+      strokeWidth={isSelected ? 2 : 1}
+      draggable
+      onClick={onClick}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragMove={onDragMove}
+    />
+    <Text x={piece.x + 5} y={piece.y + 5} text={piece.name} fontSize={14} />
+    <Text
+      x={piece.x + (piece.width * SCALE) / 2}
+      y={piece.y + (piece.height * SCALE) / 2 - 8}
+      text={`${piece.width} x ${piece.height} mm`}
+      fontSize={12}
+      align="center"
+      verticalAlign="middle"
+      offsetX={(`${piece.width} x ${piece.height} mm`.length * 6) / 2}
+    />
+  </>
+);
+
+const FreePieceCard = ({
+  piece,
+  groupLen,
+  SCALE,
+  GRAIN,
+  isSmall,
+  rotateAvailablePiece,
+}) => {
+  const aVal = GRAIN === "A" ? piece.height : piece.width;
+  const lVal = GRAIN === "A" ? piece.width : piece.height;
+  return (
+    <div className="break-inside-avoid">
+      <div
+        className="relative bg-blue-100 border border-blue-400 cursor-pointer select-none"
+        style={{
+          width: `${piece.width * SCALE}px`,
+          height: `${piece.height * SCALE}px`,
+        }}
+        draggable
+        onDragStart={(e) =>
+          e.dataTransfer.setData("application/json", JSON.stringify(piece))
+        }
+        title={`A:${aVal} L:${lVal} - ${piece.name}`}
+      >
+        {piece.rotatable && (
+          <span
+            className="absolute bottom-0 right-0 p-0.5 leading-none text-blue-700 hover:text-blue-900 cursor-pointer bg-white/70 rounded-bl-sm"
+            title="Rotar"
+            onClick={(e) => {
+              e.stopPropagation();
+              rotateAvailablePiece(piece.id);
+            }}
+          >
+            ↻
+          </span>
+        )}
+        {groupLen > 1 && (
+          <span className="absolute -top-2 -right-2 bg-gray-700 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center">
+            {groupLen}
+          </span>
+        )}
+        {!isSmall && (
+          <>
+            <span className="absolute top-0 left-1/2 -translate-x-1/2 text-[11px] font-semibold pointer-events-none select-none">
+              A:{aVal}
+            </span>
+            <span className="absolute top-1/2 left-[-9px] -translate-y-1/2 -rotate-90 origin-center text-[11px] font-semibold pointer-events-none select-none">
+              L:{lVal}
+            </span>
+            <span className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold pointer-events-none select-none">
+              {piece.name}
+            </span>
+          </>
+        )}
+        {isSmall && (
+          <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold pointer-events-none select-none">
+            {piece.name}
+          </span>
+        )}
+      </div>
+      {isSmall && (
+        <div className="text-center text-[11px] mt-1">
+          <hr className="border-gray-400 mb-1 border-dashed" />
+          <div>A:{aVal}</div>
+          <div>L:{lVal}</div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 function CutPlanEditor() {
   /* --- Estados principales --- */
@@ -142,8 +252,28 @@ function CutPlanEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, pieces]);
 
-  /* ---------- Funciones de ayuda ---------- */
-  // Verifica si una pieza colisiona con otras ya colocadas en el tablero
+  /* ==========================================================
+   ALGORITMOS DE LAYOUT Y CORTE (Guillotina)
+   ----------------------------------------------------------
+   Todas las funciones a continuación son puras: dependen
+   únicamente de sus parámetros y no modifican estado React
+   directo.  Se encargan de geometría, colisiones y reglas
+   específicas de corte.  Cada una incluye documentación
+   JSDoc para facilitar mantenimiento y pruebas unitarias.
+========================================================== */
+
+  /**
+   * Determina si un rectángulo (pieza hipotética) colisiona con
+   * alguna pieza ya posicionada en el tablero.
+   *
+   * @param {number|null} id           ID de la pieza que se está moviendo
+   *                                   (puede ser null si aún no existe en `pieces`).
+   * @param {number}       x           Coordenada X (px) de la esquina sup‑izq propuesta
+   * @param {number}       y           Coordenada Y (px) de la esquina sup‑izq propuesta
+   * @param {number}       w           Ancho de la pieza en pixeles  (width * SCALE)
+   * @param {number}       h           Alto  de la pieza en pixeles  (height * SCALE)
+   * @returns {boolean} `true` si la pieza se solaparía con otra existente.
+   */
   const checkCollision = (id, x, y, w, h) =>
     pieces.some((p) => {
       if (p.id === id) return false;
@@ -152,7 +282,6 @@ function CutPlanEditor() {
       return !(x + w <= p.x || x >= p.x + pw || y + h <= p.y || y >= p.y + ph);
     });
 
-  // Aplica snapping inteligente al mover una pieza: ajusta su posición cerca de bordes o piezas vecinas
   // Helper to find region index that fits at a given coord
   const regionIndexForPosition = (w, h, x, y) =>
     regions.findIndex(
@@ -164,6 +293,20 @@ function CutPlanEditor() {
         x + w <= r.x + r.width &&
         y + h <= r.y + r.height
     );
+
+  /**
+   * Ajusta la posición (x,y) para “imantar” la pieza a bordes del
+   * tablero o a otras piezas, siempre dejando un pasillo del ancho
+   * del kerf entre ellas.  Además limita la pieza a no salir del
+   * área útil del tablero.
+   *
+   * @param {number|null} id  ID de la pieza (se ignora al comparar con ella misma)
+   * @param {number} x        Posición X actual
+   * @param {number} y        Posición Y actual
+   * @param {number} w        Ancho de la pieza (px)
+   * @param {number} h        Alto  de la pieza (px)
+   * @returns {{x:number, y:number}} Nueva coordenada “snapeada”
+   */
   const applySnap = (id, x, y, w, h) => {
     let sx = x,
       sy = y;
@@ -235,7 +378,16 @@ function CutPlanEditor() {
     );
   };
 
-  // Divide una región en dos subregiones tras un corte horizontal tipo guillotina
+  /**
+   * Parte la región dada mediante un corte horizontal tipo guillotina.
+   * Devuelve las sub‑regiones resultantes, excluyendo trozos menores
+   * a 30×30 px.
+   *
+   * @param {Region} reg  Región a dividir
+   * @param {number} w    Ancho de la pieza recién colocada (px)
+   * @param {number} h    Alto  de la pieza recién colocada (px)
+   * @returns {Region[]}  Array (hasta 2) de sub‑regiones válidas
+   */
   const splitRegionHorizontal = (reg, w, h) => {
     const below = {
       x: reg.x,
@@ -256,7 +408,17 @@ function CutPlanEditor() {
     // Solo regiones válidas (al menos 30x30)
     return [below, right].filter((r) => r.width >= 30 && r.height >= 30);
   };
-  // Divide una región en dos subregiones tras un corte vertical tipo guillotina
+
+  /**
+   * Parte la región dada mediante un corte vertical tipo guillotina.
+   * Devuelve las sub‑regiones resultantes, excluyendo trozos menores
+   * a 30×30 px.
+   *
+   * @param {Region} reg  Región a dividir
+   * @param {number} w    Ancho de la pieza recién colocada (px)
+   * @param {number} h    Alto  de la pieza recién colocada (px)
+   * @returns {Region[]}  Array (hasta 2) de sub‑regiones válidas
+   */
   const splitRegionVertical = (reg, w, h) => {
     const right = {
       x: reg.x + w + KERF,
@@ -278,7 +440,16 @@ function CutPlanEditor() {
     return [right, below].filter((r) => r.width >= 30 && r.height >= 30);
   };
 
-  // Encuentra una región libre que pueda contener la pieza en la posición deseada
+  /**
+   * Devuelve la primera sub‑región que puede contener la pieza en
+   * la posición deseada.  Se usa para validar drag‑end o drops.
+   *
+   * @param {number} w  Ancho (px)
+   * @param {number} h  Alto  (px)
+   * @param {number} x  X sup‑izq
+   * @param {number} y  Y sup‑izq
+   * @returns {Region|null} Región adecuada o null si ninguna encaja.
+   */
   const findRegionForPiece = (w, h, x, y) =>
     regions.find(
       (r) =>
@@ -290,7 +461,17 @@ function CutPlanEditor() {
         y + h <= r.y + r.height
     );
 
-  // Verifica si un corte vertical es válido (no atraviesa otras piezas)
+  /**
+   * Comprueba que un corte vertical hipotético no atraviese ninguna
+   * pieza distinta de la que se está colocando.
+   *
+   * @param {number}  cutX          Coordenada X de la línea de corte propuesta
+   * @param {number}  y             Y sup‑izq de la pieza actual
+   * @param {number}  h             Alto de la pieza actual (px)
+   * @param {Array}   allPieces     Lista completa de piezas posicionadas
+   * @param {number}  currentPieceId  ID de la pieza evaluada (para excluirla)
+   * @returns {boolean} `true` si el corte está libre de colisiones
+   */
   const isVerticalCutClear = (cutX, y, h, allPieces, currentPieceId) =>
     !allPieces.some((p) => {
       if (p.id === currentPieceId) return false;
@@ -305,8 +486,16 @@ function CutPlanEditor() {
       );
     });
 
-  // Reconstruye el layout completo del tablero a partir de las piezas ubicadas,
-  // recalculando regiones libres y líneas de corte según las reglas de guillotina
+  /**
+   * Reconstruye todo el layout a partir del array `pieces` ya
+   * posicionadas.  Calcula regiones libres, direcciones de corte y
+   * líneas de guillotina necesarias, aplicando snapping y kerf según
+   * las reglas de producción.
+   *
+   * Complejidad: O(n²) en peor caso (por la validación de cortes).
+   *
+   * @param {Piece[]} pieceArr  Copia del estado `pieces`
+   */
   const rebuildLayoutFromPieces = (pieceArr) => {
     // Reset
     let newRegions = [
@@ -678,6 +867,66 @@ function CutPlanEditor() {
     setSelectedId(null);
   };
 
+  /**
+   * Maneja el evento onDrop sobre el tablero.
+   *  - Recupera la pieza del dataTransfer
+   *  - Encuentra la sub‑región bajo el cursor
+   *  - Verifica que la pieza quepa y no colisione
+   *  - Determina orientación (sin popup) y la coloca
+   */
+  const handleDrop = (e) => {
+    e.preventDefault();
+    const piece = JSON.parse(e.dataTransfer.getData("application/json"));
+    const rect = e.currentTarget.getBoundingClientRect();
+    const offsetX = e.clientX - rect.left - MARGIN;
+    const offsetY = e.clientY - rect.top - MARGIN;
+
+    // 1) región debajo del puntero
+    let targetReg = regions.find(
+      (r) =>
+        offsetX >= r.x &&
+        offsetX <= r.x + r.width &&
+        offsetY >= r.y &&
+        offsetY <= r.y + r.height
+    );
+
+    // 2) si no hay región o la pieza ya está en tablero, abortar
+    if (!targetReg || pieces.find((p) => p.id === piece.id)) return;
+
+    // 3) verificar que la pieza *cabe*
+    const wScaled = piece.width * SCALE;
+    const hScaled = piece.height * SCALE;
+    if (wScaled > targetReg.width || hScaled > targetReg.height) return;
+
+    // 4) esquina sup‑izq de la sub‑región
+    const snapped = { x: targetReg.x, y: targetReg.y };
+
+    if (
+      checkCollision(
+        null,
+        snapped.x,
+        snapped.y,
+        piece.width * SCALE,
+        piece.height * SCALE
+      )
+    )
+      return;
+
+    // 5) Determinar orientación sin popup
+    let orient = targetReg.direction || cutOrientation;
+    const canCutHorizontal =
+      targetReg.width >= wScaled && targetReg.height > hScaled;
+    const canCutVertical =
+      targetReg.height >= hScaled && targetReg.width > wScaled;
+    if (orient === "vertical" && !canCutVertical && canCutHorizontal) {
+      orient = "horizontal";
+    } else if (orient === "horizontal" && !canCutHorizontal && canCutVertical) {
+      orient = "vertical";
+    }
+
+    placePieceWithOrientation(piece, targetReg, orient);
+  };
+
   /* ============== Render UI ============== */
   return (
     <div className="py-4 px-6">
@@ -709,65 +958,7 @@ function CutPlanEditor() {
         <div
           className="relative inline-block"
           onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
-          onDrop={(e) => {
-            e.preventDefault();
-            const piece = JSON.parse(
-              e.dataTransfer.getData("application/json")
-            );
-            const rect = e.currentTarget.getBoundingClientRect();
-            const offsetX = e.clientX - rect.left - MARGIN;
-            const offsetY = e.clientY - rect.top - MARGIN;
-
-            // 1) región debajo del puntero, sin chequear todavía medidas
-            let targetReg = regions.find(
-              (r) =>
-                offsetX >= r.x &&
-                offsetX <= r.x + r.width &&
-                offsetY >= r.y &&
-                offsetY <= r.y + r.height
-            );
-
-            // 2) si el puntero no cae en ninguna región, abortamos
-            if (!targetReg || pieces.find((p) => p.id === piece.id)) return;
-
-            // 3) asegurarnos de que la pieza *cabe*; si no cabe, abortar
-            const wScaled = piece.width * SCALE;
-            const hScaled = piece.height * SCALE;
-
-            if (wScaled > targetReg.width || hScaled > targetReg.height) return;
-
-            // Coloca la pieza exactamente en la esquina sup‑izq de la sub‑región
-            const snapped = { x: targetReg.x, y: targetReg.y };
-
-            if (
-              checkCollision(
-                null,
-                snapped.x,
-                snapped.y,
-                piece.width * SCALE,
-                piece.height * SCALE
-              )
-            )
-              return;
-
-            // Determinar orientación sin popup
-            let orient = targetReg.direction || cutOrientation;
-            const canCutHorizontal =
-              targetReg.width >= wScaled && targetReg.height > hScaled;
-            const canCutVertical =
-              targetReg.height >= hScaled && targetReg.width > wScaled;
-            if (orient === "vertical" && !canCutVertical && canCutHorizontal) {
-              orient = "horizontal";
-            } else if (
-              orient === "horizontal" &&
-              !canCutHorizontal &&
-              canCutVertical
-            ) {
-              orient = "vertical";
-            }
-
-            placePieceWithOrientation(piece, targetReg, orient);
-          }}
+          onDrop={handleDrop}
           onDragOver={(e) => e.preventDefault()}
         >
           {/* Medidas tablero */}
@@ -838,63 +1029,40 @@ function CutPlanEditor() {
             {/* Piezas */}
             <Layer>
               {pieces.map((piece) => (
-                <React.Fragment key={piece.id}>
-                  <Rect
-                    x={piece.x}
-                    y={piece.y}
-                    width={piece.width * SCALE}
-                    height={piece.height * SCALE}
-                    fill="#60a5fa"
-                    stroke={selectedId === piece.id ? "#ff9800" : "#1e3a8a"}
-                    strokeWidth={selectedId === piece.id ? 2 : 1}
-                    draggable
-                    onClick={(e) => {
-                      e.cancelBubble = true;
-                      setSelectedId(piece.id);
-                    }}
-                    onDragStart={() =>
-                      handleDragStart(piece.id, piece.x, piece.y, piece)
-                    }
-                    onDragEnd={(e) =>
-                      handleDragEnd(
-                        piece.id,
-                        e.target.x(),
-                        e.target.y(),
-                        piece,
-                        e.target
-                      )
-                    }
-                    onDragMove={(e) => {
-                      const node = e.target;
-                      const w = piece.width * SCALE;
-                      const h = piece.height * SCALE;
-                      const idx = regionIndexForPosition(
-                        w,
-                        h,
-                        node.x(),
-                        node.y()
-                      );
-                      setHoverRegIdx(idx >= 0 ? idx : null);
-                    }}
-                  />
-                  <Text
-                    x={piece.x + 5}
-                    y={piece.y + 5}
-                    text={piece.name}
-                    fontSize={14}
-                  />
-                  <Text
-                    x={piece.x + (piece.width * SCALE) / 2}
-                    y={piece.y + (piece.height * SCALE) / 2 - 8}
-                    text={`${piece.width} x ${piece.height} mm`}
-                    fontSize={12}
-                    align="center"
-                    verticalAlign="middle"
-                    offsetX={
-                      (`${piece.width} x ${piece.height} mm`.length * 6) / 2
-                    }
-                  />
-                </React.Fragment>
+                <PieceRect
+                  key={piece.id}
+                  piece={piece}
+                  SCALE={SCALE}
+                  isSelected={selectedId === piece.id}
+                  onClick={(e) => {
+                    e.cancelBubble = true;
+                    setSelectedId(piece.id);
+                  }}
+                  onDragStart={() =>
+                    handleDragStart(piece.id, piece.x, piece.y, piece)
+                  }
+                  onDragEnd={(e) =>
+                    handleDragEnd(
+                      piece.id,
+                      e.target.x(),
+                      e.target.y(),
+                      piece,
+                      e.target
+                    )
+                  }
+                  onDragMove={(e) => {
+                    const node = e.target;
+                    const w = piece.width * SCALE;
+                    const h = piece.height * SCALE;
+                    const idx = regionIndexForPosition(
+                      w,
+                      h,
+                      node.x(),
+                      node.y()
+                    );
+                    setHoverRegIdx(idx >= 0 ? idx : null);
+                  }}
+                />
               ))}
             </Layer>
 
@@ -915,84 +1083,18 @@ function CutPlanEditor() {
             {orderedSizes.map((size) => {
               const group = sizeGroups[size];
               if (!group.length) return null;
-
-              // Tomamos la pieza en la cima del “stack”
               const topPiece = group[0];
-              // Etiquetas A y L según la dirección de la veta
-              const aVal = GRAIN === "A" ? topPiece.height : topPiece.width;
-              const lVal = GRAIN === "A" ? topPiece.width : topPiece.height;
-
-              // Consideramos pequeña si cualquiera de sus dimensiones es ≤ 120mm
               const isSmall = topPiece.width <= 120 || topPiece.height <= 120;
-
               return (
-                <div key={size} className="break-inside-avoid">
-                  {/* Representación apilada: solo la pieza superior, con badge de cantidad */}
-                  <div
-                    className="relative bg-blue-100 border border-blue-400 cursor-pointer select-none"
-                    style={{
-                      width: `${topPiece.width * SCALE}px`,
-                      height: `${topPiece.height * SCALE}px`,
-                    }}
-                    draggable
-                    onDragStart={(e) =>
-                      e.dataTransfer.setData(
-                        "application/json",
-                        JSON.stringify(topPiece)
-                      )
-                    }
-                    title={`A:${aVal} L:${lVal} - ${topPiece.name}`}
-                  >
-                    {/* Icono para rotar */}
-                    {topPiece.rotatable && (
-                      <span
-                        className="absolute bottom-0 right-0 p-0.5 leading-none text-blue-700 hover:text-blue-900 cursor-pointer bg-white/70 rounded-bl-sm"
-                        title="Rotar"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          rotateAvailablePiece(topPiece.id);
-                        }}
-                      >
-                        ↻
-                      </span>
-                    )}
-
-                    {/* Badge con el total de piezas */}
-                    {group.length > 1 && (
-                      <span className="absolute -top-2 -right-2 bg-gray-700 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center">
-                        {group.length}
-                      </span>
-                    )}
-
-                    {/* Etiquetas internas solo si NO es pequeña */}
-                    {!isSmall && (
-                      <>
-                        <span className="absolute top-0 left-1/2 -translate-x-1/2 text-[11px] font-semibold pointer-events-none select-none">
-                          A:{aVal}
-                        </span>
-                        <span className="absolute top-1/2 left-[-9px] -translate-y-1/2 -rotate-90 origin-center text-[11px] font-semibold pointer-events-none select-none">
-                          L:{lVal}
-                        </span>
-                        <span className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold pointer-events-none select-none">
-                          {topPiece.name}
-                        </span>
-                      </>
-                    )}
-                    {/* Centered name for small pieces */}
-                    {isSmall && (
-                      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold pointer-events-none select-none">
-                        {topPiece.name}
-                      </span>
-                    )}
-                  </div>
-                  {/* Info block solo si es pequeña */}
-                  {isSmall && (
-                    <div className="text-center text-[11px] mt-1">
-                      <hr className="border-gray-400 mb-1 border-dashed" />
-                      <div>A:{aVal}</div>
-                      <div>L:{lVal}</div>
-                    </div>
-                  )}
+                <div key={size}>
+                  <FreePieceCard
+                    piece={topPiece}
+                    groupLen={group.length}
+                    SCALE={SCALE}
+                    GRAIN={GRAIN}
+                    isSmall={isSmall}
+                    rotateAvailablePiece={rotateAvailablePiece}
+                  />
                 </div>
               );
             })}
