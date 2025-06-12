@@ -66,13 +66,15 @@ function CutPlanEditor() {
     },
   ]);
   const [cuts, setCuts] = useState([]); // horizontales
+  console.log("🚀 ~ CutPlanEditor ~ cuts:", cuts);
   const [vCuts, setVCuts] = useState([]); // verticales
+  console.log("🚀 ~ CutPlanEditor ~ vCuts:", vCuts);
   const [selectedId, setSelectedId] = useState(null);
   // Índice de la sub‑región donde podría encajar la pieza arrastrada
   const [hoverRegIdx, setHoverRegIdx] = useState(null);
   // Pieza arrastrada que requiere confirmación de orientación
   // {piece, region, x, y}
-  const [pendingPlacement, setPendingPlacement] = useState(null);
+  // const [pendingPlacement, setPendingPlacement] = useState(null);
   const prevPositions = useRef({}); // posición antes de arrastrar
 
   // ---- Agrupación ordenada de piezas libres ----
@@ -207,17 +209,31 @@ function CutPlanEditor() {
   };
 
   // Registra una línea de corte horizontal (y evita duplicados)
-  const addHorizontalCut = (y) => {
+  const addHorizontalCut = (
+    y,
+    xStart = MARGIN,
+    xEnd = BOARD_WIDTH + MARGIN
+  ) => {
     if (y <= MARGIN || y >= BOARD_HEIGHT + MARGIN) return;
+    const newCut = {
+      y,
+      xStart,
+      xEnd,
+    };
     setCuts((prev) =>
-      prev.some((c) => Math.abs(c.y - y) < 1) ? prev : [...prev, { y }]
+      prev.some((c) => Math.abs(c.y - y) < 1) ? prev : [...prev, newCut]
     );
   };
   // Registra una línea de corte vertical (y evita duplicados)
-  const addVerticalCut = (x) => {
+  const addVerticalCut = (x, yStart = MARGIN, yEnd = BOARD_HEIGHT + MARGIN) => {
     if (x <= MARGIN || x >= BOARD_WIDTH + MARGIN) return;
+    const newCut = {
+      x,
+      yStart,
+      yEnd,
+    };
     setVCuts((prev) =>
-      prev.some((c) => Math.abs(c.x - x) < 1) ? prev : [...prev, { x }]
+      prev.some((c) => Math.abs(c.x - x) < 1) ? prev : [...prev, newCut]
     );
   };
 
@@ -435,6 +451,14 @@ function CutPlanEditor() {
           )
     );
 
+    // Numerar cortes para vista previa de secuencia
+    newCuts = newCuts
+      .sort((a, b) => a.y - b.y || a.xStart - b.xStart)
+      .map((c, i) => ({ ...c, order: i + 1 }));
+    newVCuts = newVCuts
+      .sort((a, b) => a.x - b.x || a.yStart - b.yStart)
+      .map((c, i) => ({ ...c, order: i + 1 }));
+
     setRegions(newRegions);
     setCuts(newCuts);
     setVCuts(newVCuts);
@@ -587,7 +611,11 @@ function CutPlanEditor() {
     setAvailablePieces((prev) => prev.filter((p) => p.id !== piece.id));
 
     if (orient === "vertical") {
-      addVerticalCut(snapped.x + piece.width * SCALE);
+      addVerticalCut(
+        snapped.x + piece.width * SCALE,
+        targetReg.y,
+        targetReg.y + targetReg.height
+      );
       setRegions((prev) => {
         const newRegs = splitRegionVertical(
           targetReg,
@@ -607,7 +635,11 @@ function CutPlanEditor() {
         );
       });
     } else {
-      addHorizontalCut(snapped.y + piece.height * SCALE);
+      addHorizontalCut(
+        snapped.y + piece.height * SCALE,
+        targetReg.x,
+        targetReg.x + targetReg.width
+      );
       setRegions((prev) => {
         const newRegs = splitRegionHorizontal(
           targetReg,
@@ -720,13 +752,23 @@ function CutPlanEditor() {
             )
               return;
 
-            // Guardar en estado para preguntar orientación, incluyendo posición del cursor
-            setPendingPlacement({
-              piece,
-              targetReg,
-              x: e.clientX,
-              y: e.clientY,
-            });
+            // Determinar orientación sin popup
+            let orient = targetReg.direction || cutOrientation;
+            const canCutHorizontal =
+              targetReg.width >= wScaled && targetReg.height > hScaled;
+            const canCutVertical =
+              targetReg.height >= hScaled && targetReg.width > wScaled;
+            if (orient === "vertical" && !canCutVertical && canCutHorizontal) {
+              orient = "horizontal";
+            } else if (
+              orient === "horizontal" &&
+              !canCutHorizontal &&
+              canCutVertical
+            ) {
+              orient = "vertical";
+            }
+
+            placePieceWithOrientation(piece, targetReg, orient);
           }}
           onDragOver={(e) => e.preventDefault()}
         >
@@ -860,23 +902,42 @@ function CutPlanEditor() {
 
             {/* Líneas de corte */}
             <Layer>
+              {/* Cortes horizontales */}
               {cuts.map((c, i) => (
-                <Line
-                  key={i}
-                  points={[c.xStart, c.y, c.xEnd, c.y]}
-                  stroke="#ff0000"
-                  strokeWidth={1}
-                  dash={[4, 4]}
-                />
+                <React.Fragment key={`h${c.order ?? i}`}>
+                  <Line
+                    points={[c.xStart, c.y, c.xEnd, c.y]}
+                    stroke="#ff0000"
+                    strokeWidth={1}
+                    dash={[4, 4]}
+                  />
+                  <Text
+                    x={c.xStart + 4}
+                    y={c.y - 12}
+                    text={String(c.order ?? i + 1)}
+                    fontSize={10}
+                    fill="#ff0000"
+                  />
+                </React.Fragment>
               ))}
+
+              {/* Cortes verticales */}
               {vCuts.map((c, i) => (
-                <Line
-                  key={`v${i}`}
-                  points={[c.x, c.yStart, c.x, c.yEnd]}
-                  stroke="#ff0000"
-                  strokeWidth={1}
-                  dash={[4, 4]}
-                />
+                <React.Fragment key={`v${c.order ?? i}`}>
+                  <Line
+                    points={[c.x, c.yStart, c.x, c.yEnd]}
+                    stroke="#ff0000"
+                    strokeWidth={1}
+                    dash={[4, 4]}
+                  />
+                  <Text
+                    x={c.x + 4}
+                    y={c.yStart + 4}
+                    text={String(c.order ?? i + 1)}
+                    fontSize={10}
+                    fill="#ff0000"
+                  />
+                </React.Fragment>
               ))}
             </Layer>
           </Stage>
@@ -974,57 +1035,7 @@ function CutPlanEditor() {
           </div>
         </div>
         {/* Orientación Modal */}
-        {pendingPlacement && (
-          <div className="fixed inset-0 bg-black/40 z-50">
-            <div
-              className="absolute bg-white rounded shadow p-4 w-64"
-              style={{
-                left: pendingPlacement.x,
-                top: pendingPlacement.y,
-                transform: "translate(-50%, -50%)",
-              }}
-            >
-              <p className="mb-4 text-center">
-                ¿Orientación para&nbsp;
-                <b>{pendingPlacement.piece.name}</b>?
-              </p>
-              <div className="flex justify-around">
-                <button
-                  className="bg-blue-600 text-white px-3 py-1 rounded"
-                  onClick={() => {
-                    placePieceWithOrientation(
-                      pendingPlacement.piece,
-                      pendingPlacement.targetReg,
-                      "horizontal"
-                    );
-                    setPendingPlacement(null);
-                  }}
-                >
-                  Horizontal
-                </button>
-                <button
-                  className="bg-blue-600 text-white px-3 py-1 rounded"
-                  onClick={() => {
-                    placePieceWithOrientation(
-                      pendingPlacement.piece,
-                      pendingPlacement.targetReg,
-                      "vertical"
-                    );
-                    setPendingPlacement(null);
-                  }}
-                >
-                  Vertical
-                </button>
-              </div>
-              <button
-                className="block mx-auto mt-3 text-sm text-gray-500"
-                onClick={() => setPendingPlacement(null)}
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        )}
+        {/* modal deshabilitado */}
       </div>
     </div>
   );
