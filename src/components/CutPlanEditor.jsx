@@ -262,14 +262,10 @@ function CutPlanEditor() {
         rebuildLayoutFromPieces(filtered);
       } else if (e.key?.toLowerCase() === "v") {
         // Cambia la orientación de corte al presionar "V"
-        setCutOrientation((prev) =>
-          prev === "vertical" ? "horizontal" : "vertical"
-        );
+        setCutOrientation("vertical");
       } else if (e.key?.toLowerCase() === "h") {
         // Cambia la orientación de corte al presionar "H"
-        setCutOrientation((prev) =>
-          prev === "horizontal" ? "vertical" : "horizontal"
-        );
+        setCutOrientation("horizontal");
       }
     };
     window.addEventListener("keydown", handleKey);
