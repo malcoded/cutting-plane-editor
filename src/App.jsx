@@ -1,9 +1,9 @@
-import CutPlanEditor from "./components/CutPlanEditor";
+import RearrangePartsInPlan from "./components/RearrangePartsInPlan";
 
 function App() {
   return (
     <div className="min-h-screen bg-gray-300">
-      <CutPlanEditor />
+      <RearrangePartsInPlan />
     </div>
   );
 }

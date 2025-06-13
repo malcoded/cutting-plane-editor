@@ -13,7 +13,9 @@ const REFILADO_MM = 5;
 
 // Área útil = tablero completo menos refilado a ambos lados
 const BOARD_WIDTH = (BOARD_WIDTH_MM - 2 * REFILADO_MM) * SCALE;
+
 const BOARD_HEIGHT = (BOARD_HEIGHT_MM - 2 * REFILADO_MM) * SCALE;
+
 const SNAP_TOLERANCE_MM = 30;
 const SNAP_TOLERANCE = SNAP_TOLERANCE_MM * SCALE;
 // Margen en píxeles, derivado del refilado
@@ -200,6 +202,15 @@ function CutPlanEditor() {
   const usedVerticalCuts = useRef(new Set()); // valores X en px
   const usedHorizontalCuts = useRef(new Set()); // valores Y en px
 
+  console.log({
+    BOARD_WIDTH,
+    BOARD_HEIGHT,
+    SNAP_TOLERANCE_MM,
+    SNAP_TOLERANCE,
+    MARGIN,
+    KERF,
+  });
+
   // ---- Agrupación ordenada de piezas libres ----
   const sizeGroups = useMemo(
     () => groupBy(availablePieces, (p) => `${p.width}×${p.height}`),
@@ -295,11 +306,11 @@ function CutPlanEditor() {
    * @param {number}       h           Alto  de la pieza en pixeles  (height * SCALE)
    * @returns {boolean} `true` si la pieza se solaparía con otra existente.
    */
-  const checkCollision = (id, x, y, w, h) =>
-    pieces.some((p) => {
+  const checkCollision = (id, x, y, w, h) => pieces.some((p) => {
       if (p.id === id) return false;
-      const pw = p.width * SCALE,
-        ph = p.height * SCALE;
+
+      const pw = p.width * SCALE, ph = p.height * SCALE;
+
       return !(x + w <= p.x || x >= p.x + pw || y + h <= p.y || y >= p.y + ph);
     });
 
@@ -479,6 +490,7 @@ function CutPlanEditor() {
       (r) => r.width >= 30 && r.height >= 30
     );
 
+    console.log("🚀 ~ splitRegionVertical ~ subRegions:", subRegions);
     if (subRegions.length === 0) return [reg];
     return subRegions;
   };
@@ -695,6 +707,7 @@ function CutPlanEditor() {
 
   /* -------- DRAG: iniciar -------- */
   const handleDragStart = (id, x, y, piece) => {
+    console.log({ id, x, y, piece });
     setHoverRegIdx(null);
     // Guarda posición previa por si hay que revertir
     prevPositions.current[id] = { x, y };
@@ -832,15 +845,23 @@ function CutPlanEditor() {
   };
 
   const placePieceWithOrientation = (piece, targetReg, orient) => {
+    console.log("🚀 ~ placePieceWithOrientation ~ piece, targetReg, orient:", piece, targetReg, orient)
     // Coordenada esquina sup‑izq siempre es la de la región
     const snapped = { x: targetReg.x, y: targetReg.y };
+
+    console.log("🚀 ~ placePieceWithOrientation ~ snapped:", snapped)
 
     // Añadir pieza al tablero
     setPieces((prev) => [
       ...prev,
       { ...piece, ...snapped, cutDirection: orient },
     ]);
+
+    console.log("🚀 ~ placePieceWithOrientation ~ pieces:", pieces);
+
     setAvailablePieces((prev) => prev.filter((p) => p.id !== piece.id));
+
+    console.log("🚀 ~ placePieceWithOrientation ~ availablePieces:", availablePieces);
 
     if (orient === "vertical") {
       addVerticalCut(
@@ -965,10 +986,9 @@ function CutPlanEditor() {
 
     // 5) Determinar orientación sin popup
     let orient = targetReg.direction || cutOrientation;
-    const canCutHorizontal =
-      targetReg.width >= wScaled && targetReg.height > hScaled;
-    const canCutVertical =
-      targetReg.height >= hScaled && targetReg.width > wScaled;
+    const canCutHorizontal = targetReg.width >= wScaled && targetReg.height > hScaled;
+    const canCutVertical = targetReg.height >= hScaled && targetReg.width > wScaled;
+
     if (orient === "vertical" && !canCutVertical && canCutHorizontal) {
       orient = "horizontal";
     } else if (orient === "horizontal" && !canCutHorizontal && canCutVertical) {
@@ -1070,8 +1090,8 @@ function CutPlanEditor() {
                   height={r.height}
                   fill={r.color}
                   stroke={i === hoverRegIdx ? "#ff9800" : "rgba(0,0,0,0.2)"}
-                  strokeWidth={i === hoverRegIdx ? 3 : 1}
-                  dash={i === hoverRegIdx ? [] : [2, 2]}
+                  strokeWidth={i === hoverRegIdx ? 2 : 1}
+                  dash={i === hoverRegIdx ? [] : [1, 1]}
                   listening={false}
                 />
               ))}
